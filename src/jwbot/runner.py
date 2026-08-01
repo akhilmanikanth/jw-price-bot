@@ -14,8 +14,9 @@ from .history import History
 from .lock import LockBusy, file_lock
 from .models import PriceResult, RunReport
 from .notifier import TelegramError, TelegramNotifier
-from .products import apply_legacy_aliases
+from .products import LEGACY_KEY_ALIASES, apply_legacy_aliases
 from .scrapers import get_scrapers
+from .userdata import load_targets
 
 log = logging.getLogger(__name__)
 
@@ -167,8 +168,25 @@ def _run_locked(
     if not report.results:
         report.errors.append("No retailers were configured or enabled.")
 
-    previous = apply_legacy_aliases(history.previous_prices(exclude_run_key=key))
-    message = build_message(report, previous_prices=previous, checked_at=now)
+    # Weekly messages compare week-on-week (scheduled runs only); a manual
+    # /check compares against the most recent reading of any kind.
+    previous = apply_legacy_aliases(
+        history.previous_prices(exclude_run_key=key, include_manual=manual)
+    )
+    current_prices = {r.retailer: r.price for r in report.results if r.price is not None}
+    since = history.price_since(
+        current_prices,
+        exclude_run_key=key,
+        reverse_aliases={new: old for old, new in LEGACY_KEY_ALIASES.items()},
+    )
+    targets = load_targets(config.targets_path)
+    message = build_message(
+        report,
+        previous_prices=previous,
+        checked_at=now,
+        price_since=since,
+        targets=targets,
+    )
 
     log.info("Message built (%d chars)", len(message))
     for result in report.results:

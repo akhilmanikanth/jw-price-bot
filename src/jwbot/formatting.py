@@ -68,9 +68,13 @@ def _group_by_product(report: RunReport) -> list[tuple[str, str, bool, list[Pric
     for spec in PRODUCTS:
         if spec.key in buckets:
             groups.append((spec.key, spec.label, spec.brief, buckets.pop(spec.key)))
-    for key, results in buckets.items():  # products no longer in the catalog
-        label = results[0].product_label or key
-        groups.append((key, label, False, results))
+    for key, results in buckets.items():
+        # Bottles added at runtime via /addbottle, or removed from the catalog.
+        spec = PRODUCTS_BY_KEY.get(key)
+        if spec is not None:
+            groups.append((key, spec.label, spec.brief, results))
+        else:
+            groups.append((key, results[0].product_label or key, False, results))
     return groups
 
 
@@ -94,7 +98,9 @@ def _full_block(
     results: list[PriceResult],
     previous_prices: dict[str, float],
     include_links: bool,
+    since_notes: dict[str, str] | None = None,
 ) -> list[str]:
+    since_notes = since_notes or {}
     lines = [f"<b>{esc(label)}</b>"]
 
     for result in results:
@@ -117,8 +123,12 @@ def _full_block(
         elif direction == "new":
             trend = f"  {icon} first reading"
 
+        since = since_notes.get(result.retailer)
+        if since and direction in {"same", "unknown"}:
+            trend += f" · {esc(since)}"
+        special = " \U0001F3F7 special" if result.on_special else ""
         extra = f" <i>({esc(result.note)})</i>" if result.note else ""
-        lines.append(f"\U0001F943 {tag}: <b>{money(result.price)}</b>{extra}{trend}")
+        lines.append(f"\U0001F943 {tag}: <b>{money(result.price)}</b>{special}{extra}{trend}")
 
     good = [r for r in results if r.ok]
     if good:
@@ -194,26 +204,56 @@ SIGNAL_ICONS = {
 
 
 # --------------------------------------------------------------------------- #
+def _render_since(price_since: dict[str, tuple[str, int]], moment: datetime) -> dict[str, str]:
+    """{listing key: 'since 12 Jun (7 wk)'} - only for prices that have held."""
+    notes: dict[str, str] = {}
+    for key, (iso_date, _held) in price_since.items():
+        try:
+            start = datetime.fromisoformat(iso_date)
+        except ValueError:
+            continue
+        pretty = f"{start.day} {start.strftime('%b')}"
+        weeks = (moment.date() - start.date()).days // 7
+        notes[key] = f"since {pretty} ({weeks} wk)" if weeks >= 1 else f"since {pretty}"
+    return notes
+
+
 def build_message(
     report: RunReport,
     previous_prices: dict[str, float] | None = None,
     checked_at: datetime | None = None,
     include_links: bool = True,
+    price_since: dict[str, tuple[str, int]] | None = None,
+    targets: dict[str, float] | None = None,
 ) -> str:
     """Telegram HTML-formatted message."""
     previous_prices = apply_legacy_aliases(previous_prices or {})
     moment = checked_at or datetime.fromisoformat(report.started_at)
+    since_notes = _render_since(price_since or {}, moment)
 
     lines: list[str] = [f"\U0001F3F7 <b>{TITLE}</b>", ""]
     if report.manual:
         lines.insert(1, "<i>Manual check</i>")
+
+    if targets:
+        from .userdata import target_hits
+
+        hits = target_hits(report.results, targets)
+        for result, target in hits:
+            short = _short_label(_product_key_of(result), result.product_label or "")
+            lines.append(
+                f"\U0001F3AF <b>Target hit!</b> {esc(short)} {money(result.price)} "
+                f"at {esc(result.display_name)} (target {money(target)})"
+            )
+        if hits:
+            lines.append("")
 
     groups = _group_by_product(report)
 
     for _key, label, brief, results in groups:
         if brief:
             continue
-        lines.extend(_full_block(label, results, previous_prices, include_links))
+        lines.extend(_full_block(label, results, previous_prices, include_links, since_notes))
         lines.append("")
 
     watch = [(key, label, results) for key, label, brief, results in groups if brief]
