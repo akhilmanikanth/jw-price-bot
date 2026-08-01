@@ -1,32 +1,32 @@
-"""Liquorland (Coles Group) scraper.
+"""Liquorland (Coles Group) scrapers - one registered class per catalog product.
 
 Liquorland renders prices client-side, so the browser strategy is the reliable
-one. The cheaper HTML strategies run first in case the page is server-rendered
-on a given day (it sometimes is, via JSON-LD / __NEXT_DATA__).
+one. The cheaper HTML strategy runs first in case the page is server-rendered
+on a given day (it sometimes is, via JSON-LD / __NEXT_DATA__). Products whose
+canonical URL is not yet known skip straight to the search-page strategy,
+which resolves the URL by name and logs it so it can be baked into
+`products.py` later.
 """
 
 from __future__ import annotations
 
 import re
 from typing import Callable
+from urllib.parse import quote_plus
 
-from ..extract import extract_price_from_html
-from ..http import get_text
 from ..models import PriceResult
+from ..products import PRODUCTS, ProductSpec
 from .base import BaseScraper, ScrapeFailure, register
 
-PRODUCT_LINK_RE = re.compile(r'href="(/spirits/[^"]*johnnie-walker-black-label[^"]*700ml[^"]*)"', re.I)
+# Any product-ish link on a search results page. Matching against the catalog
+# spec (tokens/size/excludes) happens in Python, not in the regex.
+SEARCH_LINK_RE = re.compile(r'href="(/(?:spirits|whisky|whiskies|scotch)/[^"?#]+)"', re.I)
 
 
-@register
 class LiquorlandScraper(BaseScraper):
-    key = "liquorland"
+    """Base for every Liquorland product scraper (not registered itself)."""
+
     display_name = "Liquorland"
-    product_url = (
-        "https://www.liquorland.com.au/spirits/"
-        "johnnie-walker-black-label-12yo-scotch-whisky-700ml_30663"
-    )
-    search_url = "https://www.liquorland.com.au/search?q=johnnie%20walker%20black%20label%20700ml"
 
     prefer_json_keys = (
         "currentprice",
@@ -47,7 +47,11 @@ class LiquorlandScraper(BaseScraper):
         'div[class*="price"] span',
     )
     wait_selector = '[data-testid="product-price"], [class*="price"], h1'
-    expected_name_tokens = ("johnnie", "walker", "black")
+
+    @property
+    def search_url(self) -> str:
+        assert self.product is not None
+        return "https://www.liquorland.com.au/search?q=" + quote_plus(self.product.search_term)
 
     def prime_session(self, session) -> None:  # type: ignore[no-untyped-def]
         try:
@@ -56,16 +60,32 @@ class LiquorlandScraper(BaseScraper):
             self.log.debug("Could not prime Liquorland session: %s", exc)
 
     def strategies(self) -> list[tuple[str, Callable[[], PriceResult]]]:
-        out: list[tuple[str, Callable[[], PriceResult]]] = [
-            ("static-html", self.strategy_static_html),
-        ]
+        out: list[tuple[str, Callable[[], PriceResult]]] = []
+        if self.product_url:
+            out.append(("static-html", self.strategy_static_html))
+            if self.config.use_playwright:
+                out.append(("browser", self.strategy_browser))
         if self.config.use_playwright:
-            out.append(("browser", self.strategy_browser))
             out.append(("browser-search", self.strategy_browser_search))
         return out
 
+    # ------------------------------------------------------------------ #
+    def _pick_product_link(self, html: str) -> str | None:
+        """First search-result link whose slug matches the catalog spec."""
+        assert self.product is not None
+        seen: set[str] = set()
+        for match in SEARCH_LINK_RE.finditer(html):
+            path = match.group(1)
+            if path in seen:
+                continue
+            seen.add(path)
+            slug = path.rsplit("/", 1)[-1]
+            if self.product.matches_name(slug):
+                return path
+        return None
+
     def strategy_browser_search(self) -> PriceResult:
-        """Fallback: the product URL changed - find it again from the search page."""
+        """Resolve the product URL from the search page, then scrape it."""
         from ..browser import rendered_page
 
         with rendered_page(
@@ -73,14 +93,14 @@ class LiquorlandScraper(BaseScraper):
             user_agent=self.config.user_agent,
             headless=self.config.headless,
             timeout_ms=self.config.page_timeout_ms,
-            wait_selector='a[href*="johnnie-walker"], [class*="price"]',
+            wait_selector='a[href*="/spirits/"], [class*="price"]',
         ) as html:
             self._dump(html, "search")
-            match = PRODUCT_LINK_RE.search(html)
-            if not match:
+            path = self._pick_product_link(html)
+            if not path:
                 raise ScrapeFailure("product not found on Liquorland search page")
-            resolved = "https://www.liquorland.com.au" + match.group(1)
-            self.log.info("Resolved Liquorland product URL to %s", resolved)
+            resolved = "https://www.liquorland.com.au" + path
+            self.log.info("RESOLVED %s url=%s (bake into products.py)", self.key, resolved)
             self.product_url = resolved
 
         with rendered_page(
@@ -92,3 +112,20 @@ class LiquorlandScraper(BaseScraper):
         ) as html:
             self._dump(html, "search-product")
             return self._result_from_html(html, "browser-search")
+
+
+def _make_class(spec: ProductSpec) -> type[LiquorlandScraper]:
+    return type(
+        f"Liquorland_{spec.key.replace('-', '_')}",
+        (LiquorlandScraper,),
+        {
+            "key": f"liquorland:{spec.key}",
+            "product": spec,
+            "product_url": spec.liquorland.url or "",
+            "expected_name_tokens": spec.name_tokens,
+        },
+    )
+
+
+for _spec in PRODUCTS:
+    register(_make_class(_spec))

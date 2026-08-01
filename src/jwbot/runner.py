@@ -14,6 +14,7 @@ from .history import History
 from .lock import LockBusy, file_lock
 from .models import PriceResult, RunReport
 from .notifier import TelegramError, TelegramNotifier
+from .products import apply_legacy_aliases
 from .scrapers import get_scrapers
 
 log = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ def scrape_all(config: Config) -> list[PriceResult]:
         log.error("No scrapers enabled")
         return []
 
-    log.info("Checking %d retailer(s): %s", len(scrapers), ", ".join(s.display_name for s in scrapers))
+    log.info("Checking %d listing(s): %s", len(scrapers), ", ".join(s.key for s in scrapers))
     results: list[PriceResult] = []
     with ThreadPoolExecutor(max_workers=min(4, len(scrapers))) as pool:
         futures = {pool.submit(s.fetch): s for s in scrapers}
@@ -80,7 +81,12 @@ def scrape_all(config: Config) -> list[PriceResult]:
                 log.exception("Scraper %s crashed outright", scraper.key)
                 results.append(
                     PriceResult.failure(
-                        scraper.key, scraper.display_name, f"{type(exc).__name__}: {exc}", scraper.product_url
+                        scraper.key,
+                        scraper.display_name,
+                        f"{type(exc).__name__}: {exc}",
+                        scraper.product_url or None,
+                        product_key=scraper.product.key if scraper.product else None,
+                        product_label=scraper.product.label if scraper.product else None,
                     )
                 )
             finally:
@@ -161,13 +167,13 @@ def _run_locked(
     if not report.results:
         report.errors.append("No retailers were configured or enabled.")
 
-    previous = history.previous_prices(exclude_run_key=key)
+    previous = apply_legacy_aliases(history.previous_prices(exclude_run_key=key))
     message = build_message(report, previous_prices=previous, checked_at=now)
 
     log.info("Message built (%d chars)", len(message))
     for result in report.results:
         log.info(
-            "%-12s price=%s available=%s strategy=%s error=%s",
+            "%-30s price=%s available=%s strategy=%s error=%s",
             result.retailer,
             result.price,
             result.available,

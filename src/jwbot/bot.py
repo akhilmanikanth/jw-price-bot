@@ -56,10 +56,15 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     config: Config = context.application.bot_data["config"]
     if not _authorised(config, update):
         return await _deny(update)
-    retailers = ", ".join(s.display_name for s in get_scrapers(config))
+    scrapers = get_scrapers(config)
+    retailers = ", ".join(dict.fromkeys(s.display_name for s in scrapers))
+    bottles = ", ".join(
+        dict.fromkeys(s.product.short_label for s in scrapers if s.product)
+    )
     text = (
-        "\U0001F943 <b>Johnnie Walker Black Label 700mL price bot</b>\n\n"
-        f"Checking: {retailers or 'none configured'}\n"
+        "\U0001F943 <b>Whisky price bot</b>\n\n"
+        f"Retailers: {retailers or 'none configured'}\n"
+        f"Bottles: {bottles or 'none configured'}\n"
         f"Schedule: every {config.schedule_day_of_week.title()} at "
         f"{config.schedule_hour:02d}:{config.schedule_minute:02d} ({config.timezone_name})\n\n"
         "<b>Commands</b>\n"
@@ -128,9 +133,15 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return await _deny(update)
 
     history = History(config.history_path)
-    retailers = [(s.key, s.display_name) for s in get_scrapers(config)]
+    listings = [
+        (
+            s.key,
+            f"{s.display_name} - {s.product.short_label}" if s.product else s.display_name,
+        )
+        for s in get_scrapers(config)
+    ]
     await update.message.reply_text(
-        build_history_message(history, retailers), parse_mode=ParseMode.HTML
+        build_history_message(history, listings), parse_mode=ParseMode.HTML
     )
 
 
@@ -152,7 +163,8 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         "⚙️ <b>Status</b>\n\n"
         f"Now: {datetime.now(config.tz).strftime('%A, %d %b %Y %I:%M %p %Z')}\n"
         f"Next scheduled run: {next_run}\n"
-        f"Retailers: {', '.join(s.display_name for s in get_scrapers(config)) or 'none'}\n"
+        f"Listings: {len(get_scrapers(config))} "
+        f"({', '.join(dict.fromkeys(s.display_name for s in get_scrapers(config))) or 'none'})\n"
         f"Playwright: {'enabled' if config.use_playwright else 'disabled'}\n"
         f"History file: <code>{config.history_path}</code>\n"
         f"Runs recorded: {len(history.runs)}\n"
@@ -200,7 +212,7 @@ def build_scheduler(config: Config) -> AsyncIOScheduler:
         trigger=trigger,
         args=[config],
         id="weekly_price_check",
-        name="Weekly Johnnie Walker Black Label price check",
+        name="Weekly whisky price check",
         max_instances=1,      # never overlap
         coalesce=True,        # a missed run fires once, not N times
         misfire_grace_time=3600,
