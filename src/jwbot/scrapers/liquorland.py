@@ -27,6 +27,10 @@ from .base import BaseScraper, ScrapeFailure, register
 SEARCH_LINK_RE = re.compile(
     r'href="(?:https?://(?:www\.)?liquorland\.com\.au)?(/[^"?#]*_\d{3,})"', re.I
 )
+# Product slugs anywhere in the page - search results render without hrefs but
+# embed product data (incl. slugs like johnnie-walker-...-700ml_30663) in JSON
+# state. Bounded by quotes/slashes in JSON, so \b anchoring is enough.
+SLUG_ANYWHERE_RE = re.compile(r"\b([a-z0-9][a-z0-9-]{8,}_\d{4,})\b", re.I)
 TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 
 # --------------------------------------------------------------------------- #
@@ -166,7 +170,12 @@ class LiquorlandScraper(BaseScraper):
 
     # ------------------------------------------------------------------ #
     def _pick_product_link(self, html: str) -> str | None:
-        """First search-result link whose slug matches the catalog spec."""
+        """First search-result product whose slug matches the catalog spec.
+
+        Tries real hrefs first; falls back to product slugs embedded anywhere
+        in the page (Liquorland's results grid renders without <a href>s but
+        carries the slugs in its JSON state).
+        """
         assert self.product is not None
         seen: set[str] = set()
         for match in SEARCH_LINK_RE.finditer(html):
@@ -177,6 +186,13 @@ class LiquorlandScraper(BaseScraper):
             slug = path.rsplit("/", 1)[-1]
             if self.product.matches_name(slug):
                 return path
+        for match in SLUG_ANYWHERE_RE.finditer(html):
+            slug = match.group(1).lower()
+            if slug in seen:
+                continue
+            seen.add(slug)
+            if self.product.matches_name(slug):
+                return "/spirits/" + slug
         return None
 
     @staticmethod
@@ -206,13 +222,18 @@ class LiquorlandScraper(BaseScraper):
             path = self._pick_product_link(html)
             if not path:
                 slugs = self._seen_slugs(html)
-                if slugs:
-                    detail = f"{len(slugs)} product links seen: " + "; ".join(slugs[:5])[:220]
+                embedded = [m.group(1).lower() for m in SLUG_ANYWHERE_RE.finditer(html)]
+                embedded = list(dict.fromkeys(embedded))
+                if slugs or embedded:
+                    detail = (
+                        f"{len(slugs)} href links, {len(embedded)} embedded slugs seen: "
+                        + "; ".join((slugs + embedded)[:6])[:240]
+                    )
                 else:
                     title_match = TITLE_RE.search(html)
                     title = (title_match.group(1).strip()[:80] if title_match else "?")
                     detail = (
-                        f"0 product links seen; page title={title!r}, "
+                        f"0 product slugs seen; page title={title!r}, "
                         f"{html.count('href=')} hrefs, {len(html)} bytes"
                     )
                 raise ScrapeFailure(f"product not found on Liquorland search page ({detail})")
