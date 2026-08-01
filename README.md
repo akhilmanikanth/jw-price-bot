@@ -1,19 +1,42 @@
-# Johnnie Walker Black Label Price Bot
+# Whisky Price Bot
 
-Checks the price of **Johnnie Walker Black Label 700mL** at **Liquorland** and **BWS**
-every **Friday at 3:00 PM Australia/Sydney**, and sends the result to one private
-Telegram chat.
+Checks whisky prices at **Liquorland** and **BWS** every **Friday at 3:00 PM
+Australia/Sydney**, and sends one message to one private Telegram chat.
+
+Tracked bottles (see `src/jwbot/products.py`):
+
+| Product | Treatment |
+| --- | --- |
+| Johnnie Walker Black Label 700mL | full block |
+| Johnnie Walker Black Label 1 Litre | full block |
+| Johnnie Walker Blue Label 700mL | watch-list line |
+| Ballantine's Finest 700mL | watch-list line |
+| Ballantine's Finest 1 Litre | watch-list line |
+| Ballantine's 12 Year Old 700mL | watch-list line |
 
 ```
-Johnnie Walker Black Label 700mL Weekly Price Update
+Whisky Weekly Price Update
 
-Liquorland: $68.00   +$3.00 (was $65.00)
-BWS: $55.00   -$3.00 (was $58.00)
+Johnnie Walker Black Label 700mL
+Liquorland: $65.00   +$2.00 (was $63.00)
+BWS: $55.00   no change
+Cheapest today: BWS - $55.00 (save $10.00)
 
-Cheapest today: BWS - $55.00 (save $13.00)
+Johnnie Walker Black Label 1 Litre
+Liquorland: $88.00   first reading
+BWS: $84.00   first reading
+Cheapest today: BWS - $84.00 (save $4.00)
+
+Also watching
+Blue Label 700mL: Liquorland $255.00 (+$5.00) . BWS $250.00
+No change: Ballantine's Finest 700mL $50.00, Ballantine's 12YO 700mL $65.00
 
 Checked: Friday, 07 Aug 2026 - 3:00 PM (AEST)
 ```
+
+Main bottles always get the full retailer-by-retailer block. Watch-list
+bottles get one compact line when something moved (or errored - never
+silently), and collapse into a single "No change" line otherwise.
 
 (The real message uses emoji - they are stripped here so the README renders cleanly everywhere.)
 
@@ -157,7 +180,7 @@ Everything comes from environment variables (or a `.env` file). See
 | `TIMEZONE` | `Australia/Sydney` | any IANA zone |
 | `SCHEDULE_DAY_OF_WEEK` | `fri` | `mon` to `sun` |
 | `SCHEDULE_HOUR` / `SCHEDULE_MINUTE` | `15` / `0` | 24-hour clock, local time |
-| `ENABLED_RETAILERS` | *(all)* | e.g. `bws` or `liquorland,bws` |
+| `ENABLED_RETAILERS` | *(all)* | retailer (`bws`), product (`jw-black-700`) or exact listing (`bws:jw-black-700`) tokens, comma separated |
 | `USE_PLAYWRIGHT` | `true` | set `false` to skip the browser layer |
 | `HTTP_TIMEOUT` | `25` | seconds |
 | `PAGE_TIMEOUT_MS` | `45000` | Playwright navigation timeout |
@@ -167,6 +190,27 @@ Everything comes from environment variables (or a `.env` file). See
 | `DEBUG_DUMP_DIR` | - | set it to save the raw HTML of every fetch |
 
 ---
+
+## Adding another bottle
+
+Add one `ProductSpec` to `PRODUCTS` in `src/jwbot/products.py`:
+
+```python
+ProductSpec(
+    key="jw-red-700",
+    label="Johnnie Walker Red Label 700mL",
+    short_label="Red Label 700mL",
+    search_term="johnnie walker red label 700ml",
+    name_tokens=("johnnie", "walker", "red"),
+    size_tokens=("700",),
+    brief=True,  # compact watch-list line instead of a full block
+)
+```
+
+That's it - both retailers pick it up automatically. Leave the retailer URL /
+stockcode out: the search strategies resolve the product by name on the next
+run and log a `RESOLVED ... (bake into products.py)` line; paste the resolved
+reference into a `RetailerRef` afterwards so later runs take the fast path.
 
 ## Adding another liquor store
 
@@ -223,6 +267,7 @@ cause is never having sent your bot a message first.
 ```
 main.py                      CLI entry point
 src/jwbot/
+  products.py                the bottle catalog (add products here)
   config.py                  env -> Config
   logging_setup.py           console + rotating file logs
   models.py                  PriceResult, RunReport
@@ -246,7 +291,7 @@ scripts/                     Windows setup + Task Scheduler
 
 ## Notes
 
-Prices are scraped from publicly visible product pages for personal use, at one
-request per site per week. Both retailers show region-dependent pricing; the
+Prices are scraped from publicly visible product pages for personal use, with a
+handful of requests per site per week. Both retailers show region-dependent pricing; the
 figures here are the default national online prices, which may differ from your
 local store.
