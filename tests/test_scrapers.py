@@ -190,19 +190,48 @@ class TestBWSPayloadParsing:
         else:  # pragma: no cover
             raise AssertionError("expected ScrapeFailure")
 
+    def test_candidate_names_skip_facet_objects(self):
+        scraper = registry()["bws:ballantines-finest-700"](make_config())
+        payload = {
+            "Products": [{"Stockcode": 5, "Name": "Real Product 700ml"}],
+            "Facets": [{"Name": "productname"}, {"name": "categoryleafnodeid"}],
+        }
+        assert scraper._candidate_names(payload) == ["Real Product 700ml"]
+
+    def test_search_with_candidates_but_no_match_is_not_listed(self, monkeypatch):
+        """BWS answering with other products means 'not stocked', not an error."""
+        import jwbot.scrapers.bws as bws_mod
+
+        scraper = registry()["bws:ballantines-finest-700"](make_config())
+        monkeypatch.setattr(
+            bws_mod,
+            "get_json",
+            lambda *a, **kw: {"Products": [{"Stockcode": 1, "Name": "Ballantine's Scotch Whisky 500ml"}]},
+        )
+        monkeypatch.setattr(scraper.__class__, "prime_session", lambda self, s: None)
+        result = scraper.fetch()
+        assert result.error is None
+        assert result.available is False
+        assert result.price is None
+        assert result.strategy == "api-search:not-listed"
+
 
 class TestLiquorlandLinkPicking:
+    # Mixed absolute/relative hrefs, different category segments, plus
+    # non-product links that must be ignored (no _sku suffix).
     HTML = """
-    <a href="/spirits/johnnie-walker-black-label-12yo-scotch-whisky-700ml_30663">x</a>
-    <a href="/spirits/johnnie-walker-black-label-scotch-whisky-1l_30664">x</a>
+    <a href="https://www.liquorland.com.au/spirits/johnnie-walker-black-label-12yo-scotch-whisky-700ml_30663">x</a>
+    <a href="/whisky/johnnie-walker-black-label-scotch-whisky-1l_30664">x</a>
     <a href="/spirits/johnnie-walker-double-black-scotch-whisky-700ml_31000">x</a>
     <a href="/spirits/johnnie-walker-black-label-700ml-gift-pack_31234">x</a>
+    <a href="/spirits/whisky">category</a>
+    <a href="https://example.com/other/thing_999">offsite</a>
     """
 
     def test_picks_exact_size(self):
         scraper = registry()["liquorland:jw-black-1l"](make_config())
         assert scraper._pick_product_link(self.HTML) == (
-            "/spirits/johnnie-walker-black-label-scotch-whisky-1l_30664"
+            "/whisky/johnnie-walker-black-label-scotch-whisky-1l_30664"
         )
 
     def test_skips_variants_and_bundles(self):

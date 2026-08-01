@@ -171,6 +171,28 @@ class TestFormatting:
         assert "no prices retrieved" in msg
         assert "HTTP 503" in msg
 
+    def test_brief_not_listed_collapses_quietly(self):
+        # A bottle one retailer simply doesn't stock shouldn't shout weekly.
+        report = make_report(
+            [
+                (LL_BLUE, "Liquorland", 255.00, None),
+                (BWS_BLUE, "BWS", None, None),  # not listed, no error
+            ]
+        )
+        msg = build_message(report, previous_prices={LL_BLUE: 255.0})
+        assert "No change: Blue Label 700mL $255.00" in msg
+        assert "Issues" not in msg
+
+    def test_brief_fully_unlisted_says_so(self):
+        report = make_report(
+            [
+                (LL_BLUE, "Liquorland", None, None),
+                (BWS_BLUE, "BWS", None, None),
+            ]
+        )
+        msg = build_message(report, previous_prices={})
+        assert "Blue Label 700mL not listed" in msg
+
     def test_brief_error_is_loud(self):
         report = make_report(
             [
