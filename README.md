@@ -19,7 +19,7 @@ Whisky Weekly Price Update
 
 Johnnie Walker Black Label 700mL
 Liquorland: $65.00   +$2.00 (was $63.00)
-BWS: $55.00   no change
+BWS: $55.00   no change . since 12 Jun (7 wk)
 Cheapest today: BWS - $55.00 (save $10.00)
 
 Johnnie Walker Black Label 1 Litre
@@ -42,8 +42,22 @@ silently), and collapse into a single "No change" line otherwise.
 
 ## Features
 
-- **Two run modes** - GitHub Actions cron (nothing to host), or a long-running
-  process on your Windows server / Docker for the `/check` command.
+- **Two run modes, designed to be combined** - GitHub Actions cron sends the
+  Friday summary (nothing to host), and a long-running bot on your Windows
+  server / Docker answers `/check`, `/addbottle`, `/target` and friends any
+  time. The local bot doesn't double-send Fridays (`RUN_WEEKLY_JOB=false` by
+  default) and keeps its own history file.
+- **Zero-code bottle adding** - `/addbottle Chivas Regal 12 700ml` in Telegram
+  builds the spec, saves it to `data/products-custom.json` and syncs it to
+  GitHub so the Friday cloud run tracks it too.
+- **Target price alerts** - `/target black label 1l 80` puts a loud "Target
+  hit!" line at the top of any check that reaches your price.
+- **"At this price since"** - unchanged prices show how long they've held
+  (e.g. `since 12 Jun (7 wk)`), plus a best-effort "special" flag from BWS.
+- **Loud failure, twice over** - the weekly workflow messages you if it fails,
+  and a separate Friday-evening watchdog messages you if it never ran at all.
+- **Release notes from the bot** - every code push to `main` triggers a short
+  "updated to vX.Y.Z - here's what changed" Telegram message.
 - **Layered scraping** - retailer JSON APIs first, then static HTML (JSON-LD,
   `__NEXT_DATA__`, meta tags), then a real Chromium browser via Playwright.
   If one layer breaks, the next one usually still works.
@@ -66,8 +80,10 @@ silently), and collapse into a single "No change" line otherwise.
 | `python main.py test-telegram` | Verify the token and chat id |
 | `python main.py history` | Print recorded prices |
 | `python main.py retailers` | List registered retailers |
+| `python main.py version` | Print the running version + commit |
 
-Telegram commands (bot mode): `/check`, `/last`, `/history`, `/status`, `/help`.
+Telegram commands (bot mode): `/check`, `/last`, `/history`, `/bottles`,
+`/addbottle`, `/removebottle`, `/target`, `/status`, `/version`, `/help`.
 Every command is rejected unless it comes from a chat id in `TELEGRAM_CHAT_ID` /
 `TELEGRAM_ALLOWED_CHAT_IDS`, so the bot is private even though anyone can find it.
 
@@ -114,34 +130,31 @@ what makes the week-on-week comparison work.
 
 ---
 
-## 3. Run it on your Windows server
+## 3. Run the live bot on your Windows server (`/check` etc.)
+
+The GitHub Actions run handles Fridays; the server bot adds the interactive
+commands. From the repo folder (first time: run `bootstrap.ps1` and create
+`.env` with your token + chat id):
 
 ```powershell
-git clone https://github.com/akhilmanikanth/jw-price-bot.git
-cd jw-price-bot
+git pull
 
-powershell -ExecutionPolicy Bypass -File scripts\setup_windows.ps1
-notepad .env                                   # add your token and chat id
+# Try it in the foreground first (Ctrl+C to stop):
+powershell -ExecutionPolicy Bypass -File scripts\install_task.ps1 -Mode Run
 
-.venv\Scripts\python.exe main.py test-telegram
-.venv\Scripts\python.exe main.py check --dry-run
-```
-
-Then register it with Task Scheduler:
-
-```powershell
-# Option A - fire once a week, no process resident. /check will NOT work.
-powershell -ExecutionPolicy Bypass -File scripts\install_task.ps1 -Mode Weekly
-
-# Option B - run continuously at startup: APScheduler + Telegram /check.
+# Then install it for real - auto-starts with Windows, restarts on crash.
+# Run this one from an elevated ("Run as administrator") PowerShell:
 powershell -ExecutionPolicy Bypass -File scripts\install_task.ps1 -Mode Service
+
+# Undo:
+powershell -ExecutionPolicy Bypass -File scripts\install_task.ps1 -Mode Remove
 ```
 
-Handy: `scripts\run_check.bat` and `scripts\run_bot.bat`.
-
-> Running both GitHub Actions **and** a Windows instance? Point them at separate
-> `HISTORY_PATH` files, or set `ENABLED_RETAILERS` differently - otherwise you'll
-> get two messages, since they don't share the duplicate-guard state.
+Safe to combine with the cloud run out of the box: bot mode defaults to
+`RUN_WEEKLY_JOB=false` (commands only - no second Friday message) and keeps
+its own `data/history-local.json` (so `git pull` never conflicts with the
+history the cloud run commits). Set `RUN_WEEKLY_JOB=true` in `.env` only if
+you want *this machine* to send the weekly summary instead of GitHub.
 
 ### Docker (Linux or Windows with WSL2)
 
@@ -185,7 +198,10 @@ Everything comes from environment variables (or a `.env` file). See
 | `HTTP_TIMEOUT` | `25` | seconds |
 | `PAGE_TIMEOUT_MS` | `45000` | Playwright navigation timeout |
 | `MAX_RETRIES` / `RETRY_BACKOFF` | `3` / `2` | HTTP retry policy |
-| `HISTORY_PATH` | `data/history.json` | price history |
+| `RUN_WEEKLY_JOB` | `false` | bot mode only: also send the weekly summary from this machine |
+| `HISTORY_PATH` | `data/history.json` | price history (bot mode defaults to `data/history-local.json`) |
+| `TARGETS_PATH` | `data/targets.json` | `/target` price alerts |
+| `CUSTOM_PRODUCTS_PATH` | `data/products-custom.json` | bottles added via `/addbottle` |
 | `LOG_DIR` / `LOG_LEVEL` | `logs` / `INFO` | `jwbot.log` + `errors.log`, rotated |
 | `DEBUG_DUMP_DIR` | - | set it to save the raw HTML of every fetch |
 
@@ -193,7 +209,19 @@ Everything comes from environment variables (or a `.env` file). See
 
 ## Adding another bottle
 
-Add one `ProductSpec` to `PRODUCTS` in `src/jwbot/products.py`:
+**The easy way (no code):** message the bot
+
+```
+/addbottle Chivas Regal 12 700ml
+```
+
+It parses the name and size, stores the spec in `data/products-custom.json`,
+starts tracking it immediately on that machine, and pushes the file to GitHub
+so the Friday cloud run includes it too. `/bottles` lists everything;
+`/removebottle chivas` undoes it.
+
+**The code way** (for bottles that need exclude tokens or baked references):
+add one `ProductSpec` to `BUILTIN_PRODUCTS` in `src/jwbot/products.py`:
 
 ```python
 ProductSpec(
@@ -266,8 +294,10 @@ cause is never having sent your bot a message first.
 
 ```
 main.py                      CLI entry point
+VERSION                      bumped on every release; announced by the bot
 src/jwbot/
-  products.py                the bottle catalog (add products here)
+  products.py                the bottle catalog (+ /addbottle parsing)
+  userdata.py                targets + custom-bottle storage, git sync, version
   config.py                  env -> Config
   logging_setup.py           console + rotating file logs
   models.py                  PriceResult, RunReport
@@ -285,8 +315,12 @@ src/jwbot/
     liquorland.py
     bws.py
 tests/                       offline unit tests
-scripts/                     Windows setup + Task Scheduler
-.github/workflows/           weekly cron + tests
+scripts/install_task.ps1     Windows: run the live bot as an auto-start task
+.github/workflows/
+  weekly-price-check.yml     Friday cron + failure alert
+  release-notes.yml          "bot updated to vX.Y.Z" message on every push
+  watchdog.yml               Friday-evening dead-man's switch
+  tests.yml                  pytest on every push
 ```
 
 ## Notes
