@@ -92,9 +92,16 @@ class BWSScraper(BaseScraper):
             headers=self._api_headers(),
             params=params,
         )
+        import json as _json
+
+        self._dump(_json.dumps(payload, indent=2, default=str)[:500000], "api-search", ext="json")
         node = self._best_search_match(payload)
         if node is None:
-            raise ScrapeFailure("no matching product in BWS search results")
+            sample = "; ".join(self._candidate_names(payload)[:5])
+            raise ScrapeFailure(
+                "no matching product in BWS search results"
+                + (f" (saw: {sample[:220]})" if sample else " (no product names in response)")
+            )
         stockcode = node.get("Stockcode") or node.get("stockcode")
         if stockcode and str(stockcode) != (self.stockcode or ""):
             self.log.info(
@@ -143,6 +150,17 @@ class BWSScraper(BaseScraper):
             product_name=self._name_from_payload(payload),
             strategy=f"{label}:{hint}",
         )
+
+    @staticmethod
+    def _candidate_names(payload: Any) -> list[str]:
+        from ..extract import iter_json_objects
+
+        names: list[str] = []
+        for obj in iter_json_objects(payload):
+            name = obj.get("Name") or obj.get("name")
+            if isinstance(name, str) and name.strip() and name.strip() not in names:
+                names.append(name.strip())
+        return names
 
     def _name_from_payload(self, payload: Any) -> str | None:
         from ..extract import iter_json_objects

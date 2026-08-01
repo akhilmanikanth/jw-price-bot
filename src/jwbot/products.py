@@ -107,6 +107,12 @@ PRODUCTS: tuple[ProductSpec, ...] = (
         size_tokens=SIZE_1L,
         exclude_tokens=(*_BLACK_EXCLUDES, "700"),
         brief=False,
+        bws=RetailerRef(
+            # Resolved live on 2026-08-01: "Johnnie Walker Black Label 12 Year
+            # Old Blended Scotch Whisky 1l"
+            url="https://bws.com.au/product/776048/johnnie-walker-black-label-blended-scotch-whisky-1l",
+            stockcode="776048",
+        ),
     ),
     ProductSpec(
         key="jw-blue-700",
@@ -117,6 +123,12 @@ PRODUCTS: tuple[ProductSpec, ...] = (
         size_tokens=SIZE_700,
         exclude_tokens=("king george", "ghost", "ultra", "elusive", *SIZE_1L),
         brief=True,
+        bws=RetailerRef(
+            # Resolved live on 2026-08-01: "Johnnie Walker Blue Label Blended
+            # Scotch Whisky 700ml"
+            url="https://bws.com.au/product/93472/johnnie-walker-blue-label-blended-scotch-whisky-700ml",
+            stockcode="93472",
+        ),
     ),
     ProductSpec(
         key="ballantines-finest-700",

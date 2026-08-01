@@ -8,6 +8,7 @@ class with `@register`. Nothing else in the project needs to change.
 from __future__ import annotations
 
 import logging
+import re as _re
 import time
 from abc import ABC
 from datetime import datetime
@@ -196,18 +197,21 @@ class BaseScraper(ABC):
             scraped_at=datetime.now(self.config.tz).isoformat(timespec="seconds"),
         )
 
-    def _dump(self, html: str, tag: str) -> None:
+    def _dump(self, html: str, tag: str, ext: str = "html") -> None:
         directory = self.config.debug_dump_dir
         if not directory:
             return
         try:
             directory.mkdir(parents=True, exist_ok=True)
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-            path = directory / f"{self.key}-{tag}-{stamp}.html"
+            # Keys contain ":" which is illegal on NTFS and rejected by
+            # actions/upload-artifact - keep dump filenames filesystem-safe.
+            safe_key = _re.sub(r"[^A-Za-z0-9._-]+", "-", self.key)
+            path = directory / f"{safe_key}-{tag}-{stamp}.{ext}"
             path.write_text(html, encoding="utf-8", errors="replace")
-            self.log.debug("Dumped HTML to %s", path)
+            self.log.debug("Dumped %s to %s", ext, path)
         except OSError as exc:
-            self.log.debug("Could not dump HTML: %s", exc)
+            self.log.debug("Could not dump %s: %s", ext, exc)
 
     # ------------------------------------------------------------------ #
     # Entry point

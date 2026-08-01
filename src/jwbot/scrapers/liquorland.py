@@ -84,6 +84,15 @@ class LiquorlandScraper(BaseScraper):
                 return path
         return None
 
+    @staticmethod
+    def _seen_slugs(html: str) -> list[str]:
+        slugs: list[str] = []
+        for match in SEARCH_LINK_RE.finditer(html):
+            slug = match.group(1).rsplit("/", 1)[-1]
+            if slug not in slugs:
+                slugs.append(slug)
+        return slugs
+
     def strategy_browser_search(self) -> PriceResult:
         """Resolve the product URL from the search page, then scrape it."""
         from ..browser import rendered_page
@@ -93,12 +102,22 @@ class LiquorlandScraper(BaseScraper):
             user_agent=self.config.user_agent,
             headless=self.config.headless,
             timeout_ms=self.config.page_timeout_ms,
+            # Nav links also match 'a[href*="/spirits/"]', so the selector can be
+            # satisfied before results render - give the results grid extra time.
             wait_selector='a[href*="/spirits/"], [class*="price"]',
+            wait_after_load_ms=4000,
         ) as html:
             self._dump(html, "search")
             path = self._pick_product_link(html)
             if not path:
-                raise ScrapeFailure("product not found on Liquorland search page")
+                slugs = self._seen_slugs(html)
+                sample = "; ".join(slugs[:5])
+                raise ScrapeFailure(
+                    f"product not found on Liquorland search page "
+                    f"({len(slugs)} product links seen"
+                    + (f": {sample[:220]}" if sample else "")
+                    + ")"
+                )
             resolved = "https://www.liquorland.com.au" + path
             self.log.info("RESOLVED %s url=%s (bake into products.py)", self.key, resolved)
             self.product_url = resolved
