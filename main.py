@@ -69,11 +69,28 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 
 def cmd_bot(args: argparse.Namespace) -> int:
+    import os
+    from dataclasses import replace
+
     from jwbot.bot import run_bot
+    from jwbot.config import PROJECT_ROOT
 
     config = load_config()
+    # A machine running bot mode keeps its own history file unless told
+    # otherwise: data/history.json is written (and committed) by the weekly
+    # cloud run, and sharing it would make `git pull` conflict.
+    if not os.getenv("HISTORY_PATH"):
+        config = replace(config, history_path=PROJECT_ROOT / "data" / "history-local.json")
     setup_logging(config.log_level, config.log_dir)
     run_bot(config)
+    return 0
+
+
+def cmd_version(args: argparse.Namespace) -> int:
+    from jwbot.userdata import bot_version, git_short_sha
+
+    sha = git_short_sha()
+    print(f"jwbot v{bot_version()}" + (f" ({sha})" if sha else ""))
     return 0
 
 
@@ -169,6 +186,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_ret = sub.add_parser("retailers", help="list registered retailers")
     p_ret.set_defaults(func=cmd_retailers)
+
+    p_ver = sub.add_parser("version", help="print the bot version")
+    p_ver.set_defaults(func=cmd_version)
 
     return parser
 
