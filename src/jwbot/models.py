@@ -20,6 +20,7 @@ class PriceResult:
     currency: str = "AUD"
     url: str | None = None
     available: bool = False
+    on_special: bool | None = None  # best-effort promo flag (None = unknown)
     error: str | None = None
     note: str | None = None  # e.g. "member price", "on special"
     strategy: str | None = None  # which extraction path succeeded

@@ -12,6 +12,7 @@ logs/
 data/*.lock
 data/state.json
 data/*.corrupt
+data/history-local.json
 debug/
 *.log
 .DS_Store
