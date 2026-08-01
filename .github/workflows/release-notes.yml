@@ -1,0 +1,67 @@
+name: Release notes
+
+# After every real code push to main, the bot tells Alfred what changed:
+# version, commit, title and a short summary. History commits ([skip ci]) and
+# data syncs from the server ([skip notes]) stay silent.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: >-
+      !contains(github.event.head_commit.message, '[skip ci]') &&
+      !contains(github.event.head_commit.message, '[skip notes]')
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Send release note to Telegram
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          SHA: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import html, json, os, urllib.parse, urllib.request
+
+          subject, _, body = os.environ["COMMIT_MSG"].partition("\n")
+          skip = ("co-authored", "claude-session", "signed-off")
+          detail = [
+              line.strip()
+              for line in body.strip().splitlines()
+              if line.strip() and not line.strip().lower().startswith(skip)
+          ][:5]
+
+          version = "?"
+          if os.path.exists("VERSION"):
+              version = open("VERSION", encoding="utf-8").read().strip()
+
+          esc = lambda s: html.escape(s, quote=False)
+          lines = [
+              f"\U0001F680 <b>Bot updated to v{esc(version)}</b> (<code>{os.environ['SHA'][:7]}</code>)",
+              "",
+              f"<b>{esc(subject.strip())}</b>",
+          ]
+          lines += [esc(line) for line in detail]
+          lines += ["", "Nothing you need to do. /help in this chat shows every command."]
+
+          data = urllib.parse.urlencode({
+              "chat_id": os.environ["TG_CHAT"],
+              "text": "\n".join(lines),
+              "parse_mode": "HTML",
+              "disable_web_page_preview": "true",
+          }).encode()
+          url = f"https://api.telegram.org/bot{os.environ['TG_TOKEN']}/sendMessage"
+          with urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=30) as resp:
+              payload = json.load(resp)
+          assert payload.get("ok"), payload
+          print("Release note sent.")
+          PY

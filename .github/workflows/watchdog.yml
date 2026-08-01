@@ -1,0 +1,108 @@
+name: Watchdog
+
+# Dead-man's switch: if Friday's 3 PM Sydney price check has not completed and
+# messaged by ~5:30 PM Sydney, say so LOUDLY on Telegram. Closes the one silent
+# failure GitHub Actions can't report on itself: the cron never firing.
+
+on:
+  schedule:
+    - cron: "30 6 * * 5"   # 17:30 AEDT (Sydney daylight time)
+    - cron: "30 7 * * 5"   # 17:30 AEST (Sydney standard time)
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Run the verification now, ignoring the Friday-evening gate"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Verify today's check ran and notified
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.force || 'true') || 'false' }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys, urllib.parse, urllib.request
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+
+          now = datetime.now(ZoneInfo("Australia/Sydney"))
+          force = os.environ.get("FORCE") == "true"
+
+          if not force:
+              if now.weekday() != 4:
+                  print(f"Not Friday in Sydney ({now:%A}) - nothing to verify.")
+                  sys.exit(0)
+              # Two UTC cron slots cover DST; only the one landing in the
+              # 17:00-17:59 Sydney window does the verification.
+              if not (17 <= now.hour < 18):
+                  print(f"Outside the verification window ({now:%H:%M} Sydney) - skipping.")
+                  sys.exit(0)
+
+          today = now.date().isoformat()
+          run = None
+          try:
+              with open("data/history.json", encoding="utf-8") as fh:
+                  for raw in json.load(fh).get("runs", []):
+                      if raw.get("run_key") == today:
+                          run = raw
+          except (OSError, json.JSONDecodeError) as exc:
+              print(f"Could not read history: {exc}")
+
+          if run and run.get("notified"):
+              print(f"All good: run {today} completed and notified.")
+              sys.exit(0)
+
+          # Something is wrong - figure out what, then shout.
+          if run:
+              problem = "The weekly check RAN today but could not send you the summary."
+          else:
+              problem = "The weekly price check DID NOT run today."
+              try:
+                  req = urllib.request.Request(
+                      f"https://api.github.com/repos/{os.environ['REPO']}/actions/workflows/weekly-price-check.yml/runs?per_page=10",
+                      headers={
+                          "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                          "Accept": "application/vnd.github+json",
+                      },
+                  )
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      runs = json.load(resp).get("workflow_runs", [])
+                  todays = [r for r in runs if r.get("run_started_at", "").split("T")[0] >= today]
+                  if any(r.get("conclusion") == "failure" for r in todays):
+                      problem = "The weekly price check FAILED today."
+                  elif any(r.get("status") in {"queued", "in_progress"} for r in todays):
+                      problem = "The weekly price check is still running unusually late."
+              except Exception as exc:  # noqa: BLE001
+                  print(f"Could not query workflow runs: {exc}")
+
+          text = (
+              f"⚠️ <b>Watchdog</b>\n\n{problem}\n"
+              f"Have a look when you can: https://github.com/{os.environ['REPO']}/actions"
+          )
+          data = urllib.parse.urlencode({
+              "chat_id": os.environ["TG_CHAT"],
+              "text": text,
+              "parse_mode": "HTML",
+              "disable_web_page_preview": "true",
+          }).encode()
+          url = f"https://api.telegram.org/bot{os.environ['TG_TOKEN']}/sendMessage"
+          with urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=30) as resp:
+              payload = json.load(resp)
+          assert payload.get("ok"), payload
+          print("Warning sent to Telegram.")
+          PY
