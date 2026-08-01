@@ -160,6 +160,10 @@ PRODUCTS: tuple[ProductSpec, ...] = (
         size_tokens=SIZE_700,
         exclude_tokens=(*_BALLANTINES_AGED, *SIZE_1L, "500"),
         brief=True,
+        liquorland=RetailerRef(
+            # Slug surfaced by the 2026-08-01 live run's search diagnostics.
+            url="https://www.liquorland.com.au/spirits/ballantines-scotch-whisky-700ml_30151"
+        ),
     ),
     ProductSpec(
         key="ballantines-finest-1l",
@@ -180,6 +184,10 @@ PRODUCTS: tuple[ProductSpec, ...] = (
         size_tokens=SIZE_700,
         exclude_tokens=("finest", "7 year", "21", "30 year", "bourbon", *SIZE_1L),
         brief=True,
+        liquorland=RetailerRef(
+            # Resolved live on 2026-08-01 ($62.00 via json-ld).
+            url="https://www.liquorland.com.au/spirits/ballantines-12yo-blended-scotch-whisky-700ml_4521560"
+        ),
     ),
 )
 
