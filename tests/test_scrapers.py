@@ -14,6 +14,13 @@ def make_config(**kwargs):
     return Config(**base)
 
 
+def urlless(scraper):
+    """Force the search/sitemap path even when a canonical URL has since been
+    baked into the catalog - these tests exercise the resolution machinery."""
+    scraper.product_url = ""
+    return scraper
+
+
 class TestRegistry:
     def test_every_product_registered_for_both_retailers(self):
         keys = set(registry())
@@ -93,6 +100,20 @@ class TestProductSpecMatching:
         assert fin700.matches_name("ballantines-scotch-whisky-700ml_123012")  # "12" in SKU
         assert fin1l.matches_name("ballantines-finest-scotch-whisky-1l_37009")  # "700" in SKU
 
+    def test_global_size_excludes_yield_to_the_wanted_size(self):
+        """A 375mL bottle added via /addbottle must not be vetoed by the
+        global miniature excludes ("375ml" etc.)."""
+        from jwbot.products import spec_from_text
+
+        spec = spec_from_text("Jameson 375ml")
+        assert spec.matches_name("Jameson Irish Whiskey 375mL")
+        # Bundle words still apply at every size.
+        assert not spec.matches_name("Jameson Irish Whiskey 375mL Gift Pack")
+        # Other products still never match miniatures.
+        assert not PRODUCTS_BY_KEY["jw-black-700"].matches_name(
+            "Johnnie Walker Black Label 700mL + 375ml Miniature"
+        )
+
 
 class TestFetchNeverRaises:
     def test_network_failure_becomes_result(self, monkeypatch):
@@ -129,7 +150,7 @@ class TestFetchNeverRaises:
         monkeypatch.setattr(
             ll_mod, "get_text", lambda *a, **kw: (_ for _ in ()).throw(requests.ConnectionError("no net"))
         )
-        scraper = registry()["liquorland:jw-blue-700"](make_config())
+        scraper = urlless(registry()["liquorland:jw-blue-700"](make_config()))
         monkeypatch.setattr(scraper.__class__, "prime_session", lambda self, s: None)
         result = scraper.fetch()
         assert result.error
@@ -182,7 +203,7 @@ class TestLiquorlandSitemap:
 
         monkeypatch.setattr(ll_mod, "_sitemap_cache", {"paths": None, "error": None})
         monkeypatch.setattr(ll_mod, "get_text", lambda *a, **kw: self._fake_get_text(*a, **kw))
-        scraper = registry()["liquorland:ballantines-finest-700"](make_config())
+        scraper = urlless(registry()["liquorland:ballantines-finest-700"](make_config()))
         monkeypatch.setattr(scraper.__class__, "prime_session", lambda self, s: None)
         result = scraper.fetch()
         assert result.ok and result.price == 52.0
@@ -201,7 +222,7 @@ class TestLiquorlandSitemap:
         monkeypatch.setattr(ll_mod, "_sitemap_cache", {"paths": None, "error": None})
         monkeypatch.setattr(ll_mod, "get_text", counting_get_text)
         for key in ("liquorland:ballantines-finest-700", "liquorland:jw-black-1l"):
-            scraper = registry()[key](make_config())
+            scraper = urlless(registry()[key](make_config()))
             monkeypatch.setattr(scraper.__class__, "prime_session", lambda self, s: None)
             scraper.fetch()
         assert calls["index"] == 1

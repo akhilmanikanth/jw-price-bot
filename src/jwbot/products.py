@@ -72,7 +72,14 @@ class ProductSpec:
             return False
         if not any(token in lowered for token in self.size_tokens):
             return False
-        for token in (*self.exclude_tokens, *GLOBAL_EXCLUDES):
+        for token in self.exclude_tokens:
+            if token in lowered:
+                return False
+        for token in GLOBAL_EXCLUDES:
+            # A global size-based exclude (e.g. "375ml" for miniatures) must
+            # not veto a product whose *wanted* size it is.
+            if any(size in token for size in self.size_tokens):
+                continue
             if token in lowered:
                 return False
         return True
