@@ -18,9 +18,14 @@ from ..models import PriceResult
 from ..products import PRODUCTS, ProductSpec
 from .base import BaseScraper, ScrapeFailure, register
 
-# Any product-ish link on a search results page. Matching against the catalog
-# spec (tokens/size/excludes) happens in Python, not in the regex.
-SEARCH_LINK_RE = re.compile(r'href="(/(?:spirits|whisky|whiskies|scotch)/[^"?#]+)"', re.I)
+# Any product-ish link on a search results page: Liquorland product paths end
+# in an _<sku> suffix (e.g. .../johnnie-walker-...-700ml_30663), relative or
+# absolute. Matching against the catalog spec (tokens/size/excludes) happens
+# in Python, not in the regex.
+SEARCH_LINK_RE = re.compile(
+    r'href="(?:https?://(?:www\.)?liquorland\.com\.au)?(/[^"?#]*_\d{3,})"', re.I
+)
+TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 
 
 class LiquorlandScraper(BaseScraper):
@@ -111,13 +116,16 @@ class LiquorlandScraper(BaseScraper):
             path = self._pick_product_link(html)
             if not path:
                 slugs = self._seen_slugs(html)
-                sample = "; ".join(slugs[:5])
-                raise ScrapeFailure(
-                    f"product not found on Liquorland search page "
-                    f"({len(slugs)} product links seen"
-                    + (f": {sample[:220]}" if sample else "")
-                    + ")"
-                )
+                if slugs:
+                    detail = f"{len(slugs)} product links seen: " + "; ".join(slugs[:5])[:220]
+                else:
+                    title_match = TITLE_RE.search(html)
+                    title = (title_match.group(1).strip()[:80] if title_match else "?")
+                    detail = (
+                        f"0 product links seen; page title={title!r}, "
+                        f"{html.count('href=')} hrefs, {len(html)} bytes"
+                    )
+                raise ScrapeFailure(f"product not found on Liquorland search page ({detail})")
             resolved = "https://www.liquorland.com.au" + path
             self.log.info("RESOLVED %s url=%s (bake into products.py)", self.key, resolved)
             self.product_url = resolved

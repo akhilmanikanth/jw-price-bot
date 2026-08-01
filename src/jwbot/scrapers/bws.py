@@ -97,11 +97,20 @@ class BWSScraper(BaseScraper):
         self._dump(_json.dumps(payload, indent=2, default=str)[:500000], "api-search", ext="json")
         node = self._best_search_match(payload)
         if node is None:
-            sample = "; ".join(self._candidate_names(payload)[:5])
-            raise ScrapeFailure(
-                "no matching product in BWS search results"
-                + (f" (saw: {sample[:220]})" if sample else " (no product names in response)")
-            )
+            candidates = self._candidate_names(payload)
+            if candidates:
+                # The API answered with real products, just not this one:
+                # BWS doesn't list it. That's a quiet "not listed", not an error.
+                sample = "; ".join(candidates[:5])[:220]
+                self.log.warning(
+                    "No %s in BWS search results - treating as not listed (saw: %s)",
+                    self.product.label if self.product else "match",
+                    sample,
+                )
+                return self.make_result(
+                    None, False, None, "api-search:not-listed", note=None
+                )
+            raise ScrapeFailure("no product names in BWS search response")
         stockcode = node.get("Stockcode") or node.get("stockcode")
         if stockcode and str(stockcode) != (self.stockcode or ""):
             self.log.info(
@@ -153,11 +162,16 @@ class BWSScraper(BaseScraper):
 
     @staticmethod
     def _candidate_names(payload: Any) -> list[str]:
+        """Names of actual products (objects that carry a stockcode) - facet
+        and metadata objects also have name fields, so filter those out."""
         from ..extract import iter_json_objects
 
         names: list[str] = []
         for obj in iter_json_objects(payload):
             name = obj.get("Name") or obj.get("name")
+            stockcode = obj.get("Stockcode") or obj.get("stockcode")
+            if not stockcode:
+                continue
             if isinstance(name, str) and name.strip() and name.strip() not in names:
                 names.append(name.strip())
         return names
