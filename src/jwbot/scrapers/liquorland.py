@@ -15,10 +15,15 @@ import threading
 from typing import Callable
 from urllib.parse import quote_plus
 
-from ..http import get_text
+from ..http import get_text, polite_sleep
 from ..models import PriceResult
 from ..products import PRODUCTS, ProductSpec
 from .base import BaseScraper, ScrapeFailure, register
+
+# Liquorland's bot protection (ShieldSquare) flags parallel bursts. All
+# Liquorland scrapers share this lock so their fetches run one at a time,
+# with a small polite gap - BWS scrapers stay fully parallel.
+_LL_FETCH_LOCK = threading.Lock()
 
 # Any product-ish link on a search results page: Liquorland product paths end
 # in an _<sku> suffix (e.g. .../johnnie-walker-...-700ml_30663), relative or
@@ -117,6 +122,12 @@ class LiquorlandScraper(BaseScraper):
             session.get("https://www.liquorland.com.au/", timeout=self.config.http_timeout)
         except Exception as exc:  # noqa: BLE001
             self.log.debug("Could not prime Liquorland session: %s", exc)
+
+    def fetch(self) -> PriceResult:
+        """Serialise all Liquorland traffic - parallel bursts trip ShieldSquare."""
+        with _LL_FETCH_LOCK:
+            polite_sleep(1.5, 3.5)
+            return super().fetch()
 
     def strategies(self) -> list[tuple[str, Callable[[], PriceResult]]]:
         out: list[tuple[str, Callable[[], PriceResult]]] = []
