@@ -1,10 +1,11 @@
-"""BWS (Endeavour Group) scraper.
+"""BWS (Endeavour Group) scrapers - one registered class per catalog product.
 
-Strategy order:
-  1. BWS public UI API (fast, clean JSON)   -> api.bws.com.au/apis/ui/Product/<stockcode>
-  2. BWS search API (in case the stockcode changes)
-  3. Static product HTML (JSON-LD / embedded state)
-  4. Playwright-rendered product HTML
+Strategy order per product:
+  1. BWS public UI API by stockcode (fast, clean JSON) - when the code is known
+  2. BWS search API - finds the product by name; also self-heals a stale
+     stockcode and logs the discovered one so it can be baked into products.py
+  3. Static product HTML (JSON-LD / embedded state) - when the URL is known
+  4. Playwright-rendered product HTML - when the URL is known
 """
 
 from __future__ import annotations
@@ -14,18 +15,17 @@ from typing import Any, Callable
 from ..extract import find_availability_in_json, find_price_in_json
 from ..http import get_json
 from ..models import PriceResult
+from ..products import PRODUCTS, ProductSpec
 from .base import BaseScraper, ScrapeFailure, register
 
 API_ROOT = "https://api.bws.com.au/apis/ui"
 
 
-@register
 class BWSScraper(BaseScraper):
-    key = "bws"
+    """Base for every BWS product scraper (not registered itself)."""
+
     display_name = "BWS"
-    stockcode = "9067"
-    product_url = "https://bws.com.au/product/9067/johnnie-walker-black-label-scotch-whisky-700ml"
-    search_term = "Johnnie Walker Black Label 700ml"
+    stockcode: str | None = None
 
     prefer_json_keys = ("singleprice", "sellprice", "onlineprice", "price")
     price_selectors = (
@@ -36,14 +36,18 @@ class BWSScraper(BaseScraper):
         'span[class*="price"]',
     )
     wait_selector = 'h1, [data-testid="product-price"]'
-    expected_name_tokens = ("johnnie", "walker", "black")
+
+    @property
+    def search_term(self) -> str:
+        assert self.product is not None
+        return self.product.search_term
 
     # ------------------------------------------------------------------ #
     def _api_headers(self) -> dict[str, str]:
         return {
             "Accept": "application/json, text/plain, */*",
             "Origin": "https://bws.com.au",
-            "Referer": self.product_url,
+            "Referer": self.product_url or "https://bws.com.au/",
         }
 
     def prime_session(self, session) -> None:  # type: ignore[no-untyped-def]
@@ -55,13 +59,14 @@ class BWSScraper(BaseScraper):
 
     # ------------------------------------------------------------------ #
     def strategies(self) -> list[tuple[str, Callable[[], PriceResult]]]:
-        out: list[tuple[str, Callable[[], PriceResult]]] = [
-            ("api-product", self.strategy_api_product),
-            ("api-search", self.strategy_api_search),
-            ("static-html", self.strategy_static_html),
-        ]
-        if self.config.use_playwright:
-            out.append(("browser", self.strategy_browser))
+        out: list[tuple[str, Callable[[], PriceResult]]] = []
+        if self.stockcode:
+            out.append(("api-product", self.strategy_api_product))
+        out.append(("api-search", self.strategy_api_search))
+        if self.product_url:
+            out.append(("static-html", self.strategy_static_html))
+            if self.config.use_playwright:
+                out.append(("browser", self.strategy_browser))
         return out
 
     # ------------------------------------------------------------------ #
@@ -90,27 +95,32 @@ class BWSScraper(BaseScraper):
         node = self._best_search_match(payload)
         if node is None:
             raise ScrapeFailure("no matching product in BWS search results")
+        stockcode = node.get("Stockcode") or node.get("stockcode")
+        if stockcode and str(stockcode) != (self.stockcode or ""):
+            self.log.info(
+                "RESOLVED %s stockcode=%s name=%r (bake into products.py)",
+                self.key,
+                stockcode,
+                node.get("Name") or node.get("name"),
+            )
         return self._from_api_payload(node, "api-search")
 
     # ------------------------------------------------------------------ #
     def _best_search_match(self, payload: Any) -> Any:
-        """Pick the plain 700mL Black Label, not gift packs or Double Black."""
+        """Pick the exact catalog product - not gift packs, other sizes or
+        sibling expressions."""
         from ..extract import iter_json_objects
 
+        assert self.product is not None
         best = None
         for obj in iter_json_objects(payload):
             name = obj.get("Name") or obj.get("name")
             stockcode = obj.get("Stockcode") or obj.get("stockcode")
             if not isinstance(name, str):
                 continue
-            lowered = name.lower()
-            if str(stockcode) == self.stockcode:
+            if self.stockcode and str(stockcode) == self.stockcode:
                 return obj
-            if not all(token in lowered for token in self.expected_name_tokens):
-                continue
-            if "700" not in lowered:
-                continue
-            if any(bad in lowered for bad in ("gift", "glass", "double", "sherry", "ruby", "icons", "origin", "1l", "1 litre")):
+            if not self.product.matches_name(name):
                 continue
             if best is None:
                 best = obj
@@ -134,12 +144,35 @@ class BWSScraper(BaseScraper):
             strategy=f"{label}:{hint}",
         )
 
-    @staticmethod
-    def _name_from_payload(payload: Any) -> str | None:
+    def _name_from_payload(self, payload: Any) -> str | None:
         from ..extract import iter_json_objects
 
+        assert self.product is not None
+        fallback = None
         for obj in iter_json_objects(payload):
             name = obj.get("Name") or obj.get("name")
-            if isinstance(name, str) and "johnnie" in name.lower():
+            if not isinstance(name, str):
+                continue
+            if self.product.matches_name(name):
                 return name
-        return None
+            if fallback is None:
+                fallback = name
+        return fallback
+
+
+def _make_class(spec: ProductSpec) -> type[BWSScraper]:
+    return type(
+        f"BWS_{spec.key.replace('-', '_')}",
+        (BWSScraper,),
+        {
+            "key": f"bws:{spec.key}",
+            "product": spec,
+            "product_url": spec.bws.url or "",
+            "stockcode": spec.bws.stockcode,
+            "expected_name_tokens": spec.name_tokens,
+        },
+    )
+
+
+for _spec in PRODUCTS:
+    register(_make_class(_spec))

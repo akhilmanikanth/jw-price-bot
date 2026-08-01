@@ -19,6 +19,7 @@ from ..config import Config
 from ..extract import extract_price_from_html, looks_out_of_stock
 from ..http import build_session, get_text
 from ..models import PriceResult
+from ..products import ProductSpec
 
 log = logging.getLogger(__name__)
 
@@ -37,18 +38,28 @@ def registry() -> dict[str, type["BaseScraper"]]:
     return dict(_REGISTRY)
 
 
+def _token_matches_key(token: str, key: str) -> bool:
+    """ENABLED_RETAILERS accepts a full key ("bws:jw-black-700"), a retailer
+    ("bws" = every BWS product) or a product key ("jw-black-700" = every
+    retailer for that product)."""
+    retailer, _, product = key.partition(":")
+    return token == key or token == retailer or (bool(product) and token == product)
+
+
 def get_scrapers(config: Config) -> list["BaseScraper"]:
     """Instantiate the enabled scrapers, in registration order."""
     wanted = config.enabled_retailers
     scrapers: list[BaseScraper] = []
     for key, cls in _REGISTRY.items():
-        if wanted and key not in wanted:
+        if wanted and not any(_token_matches_key(t, key) for t in wanted):
             continue
         scrapers.append(cls(config))
     if wanted:
-        unknown = set(wanted) - set(_REGISTRY)
+        unknown = [
+            t for t in wanted if not any(_token_matches_key(t, key) for key in _REGISTRY)
+        ]
         if unknown:
-            log.warning("Unknown retailer(s) in ENABLED_RETAILERS: %s", ", ".join(sorted(unknown)))
+            log.warning("Unknown token(s) in ENABLED_RETAILERS: %s", ", ".join(sorted(unknown)))
     return scrapers
 
 
@@ -58,9 +69,12 @@ class ScrapeFailure(Exception):
 
 class BaseScraper(ABC):
     # --- required per retailer ---
-    key: str = ""
+    key: str = ""  # unique registry key, e.g. "bws:jw-black-700"
     display_name: str = ""
-    product_url: str = ""
+    product_url: str = ""  # may be empty: search-based strategies resolve it
+
+    # --- product being tracked (None for single-product custom scrapers) ---
+    product: ProductSpec | None = None
 
     # --- optional per retailer ---
     price_selectors: Sequence[str] = ()
@@ -104,9 +118,10 @@ class BaseScraper(ABC):
         out: list[tuple[str, Callable[[], PriceResult]]] = []
         if hasattr(self, "strategy_api"):
             out.append(("api", getattr(self, "strategy_api")))
-        out.append(("static-html", self.strategy_static_html))
-        if self.config.use_playwright:
-            out.append(("browser", self.strategy_browser))
+        if self.product_url:  # URL-based strategies need a URL to fetch
+            out.append(("static-html", self.strategy_static_html))
+            if self.config.use_playwright:
+                out.append(("browser", self.strategy_browser))
         return out
 
     def strategy_static_html(self) -> PriceResult:
@@ -170,6 +185,8 @@ class BaseScraper(ABC):
         return PriceResult(
             retailer=self.key,
             display_name=self.display_name,
+            product_key=self.product.key if self.product else None,
+            product_label=self.product.label if self.product else None,
             product_name=(product_name or "").strip() or None,
             price=round(price, 2) if price is not None else None,
             url=self.product_url,
@@ -237,7 +254,14 @@ class BaseScraper(ABC):
 
         message = "; ".join(errors) or "all strategies failed"
         self.log.error("Could not get a price: %s", message)
-        failure = PriceResult.failure(self.key, self.display_name, message, self.product_url)
+        failure = PriceResult.failure(
+            self.key,
+            self.display_name,
+            message,
+            self.product_url or None,
+            product_key=self.product.key if self.product else None,
+            product_label=self.product.label if self.product else None,
+        )
         failure.duration_s = round(time.monotonic() - started, 2)
         return failure
 

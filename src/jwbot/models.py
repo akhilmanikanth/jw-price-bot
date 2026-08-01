@@ -11,8 +11,10 @@ from typing import Any
 class PriceResult:
     """The outcome of asking one retailer for one product's price."""
 
-    retailer: str  # machine key, e.g. "liquorland"
+    retailer: str  # machine key, e.g. "liquorland:jw-black-700"
     display_name: str  # human label, e.g. "Liquorland"
+    product_key: str | None = None  # catalog key, e.g. "jw-black-700"
+    product_label: str | None = None  # human label, e.g. "Johnnie Walker Black Label 700mL"
     product_name: str | None = None
     price: float | None = None
     currency: str = "AUD"
@@ -43,10 +45,14 @@ class PriceResult:
         display_name: str,
         error: str,
         url: str | None = None,
+        product_key: str | None = None,
+        product_label: str | None = None,
     ) -> "PriceResult":
         return cls(
             retailer=retailer,
             display_name=display_name,
+            product_key=product_key,
+            product_label=product_label,
             url=url,
             available=False,
             error=error,
