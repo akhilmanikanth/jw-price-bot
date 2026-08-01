@@ -72,9 +72,26 @@ class TestProductSpecMatching:
         assert twelve.matches_name("Ballantine's 12 Year Old Blended Scotch Whisky 700mL")
         assert not twelve.matches_name("Ballantine's Finest Blended Scotch Whisky 700mL")
 
+    def test_ballantines_bws_real_names(self):
+        """BWS names the base blend without the word 'Finest'."""
+        fin700 = PRODUCTS_BY_KEY["ballantines-finest-700"]
+        fin1l = PRODUCTS_BY_KEY["ballantines-finest-1l"]
+        assert fin700.matches_name("Ballantine's Scotch Whisky 700ml")
+        assert not fin700.matches_name("Ballantine's Scotch Whisky 500ml")
+        assert not fin700.matches_name("Ballantine's 12 Year Old Blended Scotch Whisky 700ml")
+        assert fin1l.matches_name("Ballantine's Finest Blended Scotch Whisky 1l")
+        assert not fin1l.matches_name("Ballantine's Scotch Whisky 700ml")
+
     def test_slug_matching(self):
         p1l = PRODUCTS_BY_KEY["jw-black-1l"]
         assert p1l.matches_name("johnnie-walker-black-label-scotch-whisky-1l_12345")
+
+    def test_sku_digits_do_not_trigger_numeric_tokens(self):
+        """Liquorland SKU suffixes must not collide with numeric excludes."""
+        fin700 = PRODUCTS_BY_KEY["ballantines-finest-700"]
+        fin1l = PRODUCTS_BY_KEY["ballantines-finest-1l"]
+        assert fin700.matches_name("ballantines-scotch-whisky-700ml_123012")  # "12" in SKU
+        assert fin1l.matches_name("ballantines-finest-scotch-whisky-1l_37009")  # "700" in SKU
 
 
 class TestFetchNeverRaises:
@@ -105,8 +122,15 @@ class TestFetchNeverRaises:
         result = scraper.fetch()
         assert result.error and "ValueError" in result.error
 
-    def test_urlless_product_without_playwright_fails_loudly(self):
+    def test_urlless_product_without_playwright_fails_loudly(self, monkeypatch):
+        import jwbot.scrapers.liquorland as ll_mod
+
+        monkeypatch.setattr(ll_mod, "_sitemap_cache", {"paths": None, "error": None})
+        monkeypatch.setattr(
+            ll_mod, "get_text", lambda *a, **kw: (_ for _ in ()).throw(requests.ConnectionError("no net"))
+        )
         scraper = registry()["liquorland:jw-blue-700"](make_config())
+        monkeypatch.setattr(scraper.__class__, "prime_session", lambda self, s: None)
         result = scraper.fetch()
         assert result.error
         assert result.product_key == "jw-blue-700"
@@ -123,6 +147,64 @@ class TestFetchNeverRaises:
         assert result.ok is True
         assert result.duration_s is not None
         assert result.product_label == "Johnnie Walker Black Label 700mL"
+
+
+class TestLiquorlandSitemap:
+    INDEX = (
+        '<sitemapindex><sitemap>'
+        "<loc>https://www.liquorland.com.au/sitemap-products-1.xml</loc>"
+        "</sitemap></sitemapindex>"
+    )
+    SUB = (
+        "<urlset>"
+        "<url><loc>https://www.liquorland.com.au/spirits/ballantines-scotch-whisky-700ml_123012</loc></url>"
+        "<url><loc>https://www.liquorland.com.au/spirits/johnnie-walker-blue-label-scotch-whisky-700ml_54321</loc></url>"
+        "</urlset>"
+    )
+    PRODUCT_HTML = (
+        '<html><head><script type="application/ld+json">'
+        '{"@type":"Product","name":"Ballantines 700mL",'
+        '"offers":{"price":"52.00","availability":"InStock"}}'
+        "</script></head><body>" + "x" * 300 + "</body></html>"
+    )
+
+    def _fake_get_text(self, session, url, timeout, **kw):
+        if url.endswith("sitemap.xml"):
+            return self.INDEX
+        if url.endswith("sitemap-products-1.xml"):
+            return self.SUB
+        if url.endswith("_123012"):
+            return self.PRODUCT_HTML
+        raise requests.ConnectionError("unexpected " + url)
+
+    def test_resolves_and_scrapes_from_sitemap(self, monkeypatch):
+        import jwbot.scrapers.liquorland as ll_mod
+
+        monkeypatch.setattr(ll_mod, "_sitemap_cache", {"paths": None, "error": None})
+        monkeypatch.setattr(ll_mod, "get_text", lambda *a, **kw: self._fake_get_text(*a, **kw))
+        scraper = registry()["liquorland:ballantines-finest-700"](make_config())
+        monkeypatch.setattr(scraper.__class__, "prime_session", lambda self, s: None)
+        result = scraper.fetch()
+        assert result.ok and result.price == 52.0
+        assert result.url.endswith("_123012")
+
+    def test_sitemap_fetched_once_across_scrapers(self, monkeypatch):
+        import jwbot.scrapers.liquorland as ll_mod
+
+        calls = {"index": 0}
+
+        def counting_get_text(session, url, timeout, **kw):
+            if url.endswith("sitemap.xml"):
+                calls["index"] += 1
+            return self._fake_get_text(session, url, timeout, **kw)
+
+        monkeypatch.setattr(ll_mod, "_sitemap_cache", {"paths": None, "error": None})
+        monkeypatch.setattr(ll_mod, "get_text", counting_get_text)
+        for key in ("liquorland:ballantines-finest-700", "liquorland:jw-black-1l"):
+            scraper = registry()[key](make_config())
+            monkeypatch.setattr(scraper.__class__, "prime_session", lambda self, s: None)
+            scraper.fetch()
+        assert calls["index"] == 1
 
 
 class TestBWSPayloadParsing:
@@ -202,7 +284,7 @@ class TestBWSPayloadParsing:
         """BWS answering with other products means 'not stocked', not an error."""
         import jwbot.scrapers.bws as bws_mod
 
-        scraper = registry()["bws:ballantines-finest-700"](make_config())
+        scraper = registry()["bws:ballantines-12-700"](make_config())
         monkeypatch.setattr(
             bws_mod,
             "get_json",
