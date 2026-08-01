@@ -1,63 +1,81 @@
-<#
-.SYNOPSIS
-    Register the price check with Windows Task Scheduler.
-
-.DESCRIPTION
-    Two modes:
-      -Mode Weekly   (default) run `main.py check` every Friday at 3:00 PM local time.
-                     Simple; no process sits in memory. /check in Telegram will NOT work.
-      -Mode Service  run `main.py bot` continuously at startup (APScheduler + /check).
-
-.EXAMPLE
-    powershell -ExecutionPolicy Bypass -File scripts\install_task.ps1 -Mode Weekly
-    powershell -ExecutionPolicy Bypass -File scripts\install_task.ps1 -Mode Service
-#>
+# Installs the Telegram bot (/check commands) as an auto-starting background
+# task on this Windows machine. Run from an **elevated** PowerShell:
+#
+#   powershell -ExecutionPolicy Bypass -File scripts\install_task.ps1 -Mode Service
+#
+# Modes:
+#   Service  register + start the "JWPriceBot" task (auto-starts with Windows,
+#            restarts itself if it crashes)
+#   Remove   stop + unregister the task
+#   Run      run the bot in this window (foreground, Ctrl+C to stop)
+#
+# The bot answers /check /last /history /bottles /addbottle /target /status.
+# The Friday summary still comes from the GitHub Actions run; this task does
+# not double-send it (RUN_WEEKLY_JOB defaults to off).
 
 param(
-    [ValidateSet("Weekly", "Service")]
-    [string]$Mode = "Weekly",
-    [string]$TaskName = "JohnnieWalkerPriceBot",
-    [string]$Time = "15:00"
+    [ValidateSet("Service", "Remove", "Run")]
+    [string]$Mode = "Service"
 )
 
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $PSScriptRoot
-$py = Join-Path $root ".venv\Scripts\python.exe"
+$TaskName = "JWPriceBot"
+$Root = Split-Path -Parent $PSScriptRoot
 
-if (-not (Test-Path $py)) {
-    throw "Virtualenv not found at $py. Run scripts\setup_windows.ps1 first."
+# Prefer the project venv; fall back to python on PATH.
+$Python = Join-Path $Root ".venv\Scripts\python.exe"
+if (-not (Test-Path $Python)) {
+    $cmd = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $cmd) { throw "python not found - run bootstrap.ps1 first." }
+    $Python = $cmd.Source
 }
 
-if ($Mode -eq "Weekly") {
-    $taskName = $TaskName
-    $action = New-ScheduledTaskAction -Execute $py -Argument "main.py check" -WorkingDirectory $root
-    $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Friday -At $Time
-    $description = "Weekly Johnnie Walker Black Label 700mL price check (Friday $Time)"
-} else {
-    $taskName = "$TaskName-Service"
-    $action = New-ScheduledTaskAction -Execute $py -Argument "main.py bot" -WorkingDirectory $root
-    $trigger = New-ScheduledTaskTrigger -AtStartup
-    $description = "Johnnie Walker price bot - continuous (Telegram /check + weekly schedule)"
+if (-not (Test-Path (Join-Path $Root ".env"))) {
+    Write-Warning ".env not found in $Root - the bot needs TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID."
+    Write-Warning "If you have env.pending: Rename-Item `"$Root\env.pending`" .env"
 }
 
-$settings = New-ScheduledTaskSettingsSet `
-    -AllowStartIfOnBatteries `
-    -DontStopIfGoingOnBatteries `
-    -StartWhenAvailable `
-    -RestartCount 3 `
-    -RestartInterval (New-TimeSpan -Minutes 5) `
-    -ExecutionTimeLimit (New-TimeSpan -Hours 0)
+switch ($Mode) {
+    "Run" {
+        Write-Host "Starting bot in the foreground (Ctrl+C to stop)..."
+        Set-Location $Root
+        & $Python main.py bot
+        break
+    }
+    "Remove" {
+        Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue | Out-Null
+        if ($?) {
+            Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+            Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+            Write-Host "Removed scheduled task '$TaskName'."
+        } else {
+            Write-Host "Task '$TaskName' is not installed."
+        }
+        break
+    }
+    "Service" {
+        $action = New-ScheduledTaskAction -Execute $Python -Argument "main.py bot" -WorkingDirectory $Root
+        $trigger = New-ScheduledTaskTrigger -AtStartup
+        $settings = New-ScheduledTaskSettingsSet `
+            -ExecutionTimeLimit ([TimeSpan]::Zero) `
+            -RestartCount 999 `
+            -RestartInterval (New-TimeSpan -Minutes 2) `
+            -StartWhenAvailable `
+            -AllowStartIfOnBatteries `
+            -DontStopIfGoingOnBatteries
+        # S4U = runs as your user whether or not you're logged in, no stored password.
+        $principal = New-ScheduledTaskPrincipal `
+            -UserId "$env:USERDOMAIN\$env:USERNAME" `
+            -LogonType S4U `
+            -RunLevel Limited
 
-Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-
-Register-ScheduledTask `
-    -TaskName $taskName `
-    -Action $action `
-    -Trigger $trigger `
-    -Settings $settings `
-    -Description $description `
-    -RunLevel Highest | Out-Null
-
-Write-Host "Registered scheduled task '$taskName' ($Mode mode)." -ForegroundColor Green
-Write-Host "Verify with:  Get-ScheduledTask -TaskName $taskName | Get-ScheduledTaskInfo"
-Write-Host "Run now with: Start-ScheduledTask -TaskName $taskName"
+        Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
+            -Settings $settings -Principal $principal -Force | Out-Null
+        Start-ScheduledTask -TaskName $TaskName
+        Start-Sleep -Seconds 3
+        $state = (Get-ScheduledTask -TaskName $TaskName).State
+        Write-Host "Task '$TaskName' installed (state: $state)."
+        Write-Host "Logs: $Root\logs\  -  try /status in Telegram in ~10 seconds."
+        break
+    }
+}
