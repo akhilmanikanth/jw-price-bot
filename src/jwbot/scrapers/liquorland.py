@@ -11,9 +11,11 @@ which resolves the URL by name and logs it so it can be baked into
 from __future__ import annotations
 
 import re
+import threading
 from typing import Callable
 from urllib.parse import quote_plus
 
+from ..http import get_text
 from ..models import PriceResult
 from ..products import PRODUCTS, ProductSpec
 from .base import BaseScraper, ScrapeFailure, register
@@ -26,6 +28,54 @@ SEARCH_LINK_RE = re.compile(
     r'href="(?:https?://(?:www\.)?liquorland\.com\.au)?(/[^"?#]*_\d{3,})"', re.I
 )
 TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
+
+# --------------------------------------------------------------------------- #
+# Sitemap-based product URL resolution.
+#
+# Liquorland's search results render without product <a href>s and rate-limit
+# bursts behind a captcha, but its XML sitemaps are static, bot-friendly and
+# list every product URL (which all end in the _<sku> suffix). One fetch per
+# run resolves every unknown product; the product pages themselves scrape
+# reliably.
+# --------------------------------------------------------------------------- #
+SITEMAP_INDEX_URL = "https://www.liquorland.com.au/sitemap.xml"
+_LOC_RE = re.compile(r"<loc>\s*([^<\s]+?)\s*</loc>", re.I)
+_PRODUCT_PATH_RE = re.compile(r"https?://(?:www\.)?liquorland\.com\.au(/[^\s<>\"']*_\d{3,})", re.I)
+_MAX_SUB_SITEMAPS = 15
+
+_sitemap_lock = threading.Lock()
+_sitemap_cache: dict[str, object] = {"paths": None, "error": None}
+
+
+def _load_sitemap_paths(session, timeout: float, log) -> list[str]:
+    """Fetch (once per process) every product path in Liquorland's sitemaps."""
+    with _sitemap_lock:
+        if _sitemap_cache["paths"] is not None:
+            return _sitemap_cache["paths"]  # type: ignore[return-value]
+        if _sitemap_cache["error"] is not None:
+            raise ScrapeFailure(f"sitemap unavailable: {_sitemap_cache['error']}")
+        try:
+            index = get_text(session, SITEMAP_INDEX_URL, timeout=timeout)
+            paths: list[str] = _PRODUCT_PATH_RE.findall(index)
+            sub_maps = [
+                loc for loc in _LOC_RE.findall(index) if loc.lower().endswith(".xml")
+            ][:_MAX_SUB_SITEMAPS]
+            for loc in sub_maps:
+                try:
+                    body = get_text(session, loc, timeout=timeout)
+                except Exception as exc:  # noqa: BLE001 - one bad sub-sitemap shouldn't kill the run
+                    log.debug("Could not fetch sub-sitemap %s: %s", loc, exc)
+                    continue
+                paths.extend(_PRODUCT_PATH_RE.findall(body))
+            deduped = list(dict.fromkeys(paths))
+            log.info("Liquorland sitemap: %d product URLs collected", len(deduped))
+            _sitemap_cache["paths"] = deduped
+            return deduped
+        except ScrapeFailure:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            _sitemap_cache["error"] = f"{type(exc).__name__}: {exc}"
+            raise ScrapeFailure(f"sitemap unavailable: {_sitemap_cache['error']}")
 
 
 class LiquorlandScraper(BaseScraper):
@@ -70,9 +120,49 @@ class LiquorlandScraper(BaseScraper):
             out.append(("static-html", self.strategy_static_html))
             if self.config.use_playwright:
                 out.append(("browser", self.strategy_browser))
+        else:
+            out.append(("sitemap", self.strategy_sitemap))
         if self.config.use_playwright:
             out.append(("browser-search", self.strategy_browser_search))
         return out
+
+    # ------------------------------------------------------------------ #
+    def strategy_sitemap(self) -> PriceResult:
+        """Resolve the product URL from Liquorland's sitemaps, then scrape it."""
+        assert self.product is not None
+        paths = _load_sitemap_paths(self.session, self.config.http_timeout, self.log)
+        match = None
+        for path in paths:
+            slug = path.rsplit("/", 1)[-1]
+            if self.product.matches_name(slug):
+                match = path
+                break
+        if match is None:
+            raise ScrapeFailure(
+                f"no matching product among {len(paths)} sitemap URLs"
+            )
+        resolved = "https://www.liquorland.com.au" + match
+        self.log.info("RESOLVED %s url=%s (bake into products.py)", self.key, resolved)
+        self.product_url = resolved
+
+        try:
+            html = get_text(self.session, resolved, timeout=self.config.http_timeout)
+            self._dump(html, "sitemap-static")
+            return self._result_from_html(html, "sitemap-static")
+        except ScrapeFailure:
+            if not self.config.use_playwright:
+                raise
+        from ..browser import rendered_page
+
+        with rendered_page(
+            resolved,
+            user_agent=self.config.user_agent,
+            headless=self.config.headless,
+            timeout_ms=self.config.page_timeout_ms,
+            wait_selector=self.wait_selector,
+        ) as html:
+            self._dump(html, "sitemap-browser")
+            return self._result_from_html(html, "sitemap-browser")
 
     # ------------------------------------------------------------------ #
     def _pick_product_link(self, html: str) -> str | None:

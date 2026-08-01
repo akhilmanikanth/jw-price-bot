@@ -8,7 +8,10 @@ name, and log what they found so the reference can be baked in later.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
+
+_SKU_SUFFIX_RE = re.compile(r"_\d+$")
 
 # Tokens that mark bundles and variants we never want, for any product.
 GLOBAL_EXCLUDES = (
@@ -49,7 +52,9 @@ class ProductSpec:
         """Does a retailer's product name / URL slug look like this product?"""
         if not name:
             return False
-        lowered = name.lower().replace("-", " ")
+        # Strip Liquorland-style trailing SKUs (…-700ml_30663) so their digits
+        # can't collide with numeric size/exclude tokens like "12" or "700".
+        lowered = _SKU_SUFFIX_RE.sub("", name.lower()).replace("-", " ")
         if not all(token in lowered for token in self.name_tokens):
             return False
         if not any(token in lowered for token in self.size_tokens):
@@ -62,6 +67,19 @@ class ProductSpec:
 
 SIZE_700 = ("700",)
 SIZE_1L = ("1l", "1 l", "1 litre", "1litre", "1000ml", "1000 ml")
+
+# Aged / special Ballantine's expressions that must not match the base blend.
+_BALLANTINES_AGED = (
+    "12",
+    "17",
+    "21",
+    "23",
+    "30",
+    "7 year",
+    "bourbon",
+    "light",
+    "brasil",
+)
 
 # Excludes that keep the two Black Label sizes from matching each other,
 # and keep special editions out of the plain Black Label results.
@@ -130,14 +148,17 @@ PRODUCTS: tuple[ProductSpec, ...] = (
             stockcode="93472",
         ),
     ),
+    # BWS names the base blend plainly "Ballantine's Scotch Whisky 700ml" -
+    # no "Finest" - so the finest specs match on the brand alone and exclude
+    # the aged / special expressions instead.
     ProductSpec(
         key="ballantines-finest-700",
         label="Ballantine's Finest 700mL",
         short_label="Ballantine's Finest 700mL",
         search_term="ballantines finest",
-        name_tokens=("ballantine", "finest"),
+        name_tokens=("ballantine",),
         size_tokens=SIZE_700,
-        exclude_tokens=(*SIZE_1L,),
+        exclude_tokens=(*_BALLANTINES_AGED, *SIZE_1L, "500"),
         brief=True,
     ),
     ProductSpec(
@@ -145,9 +166,9 @@ PRODUCTS: tuple[ProductSpec, ...] = (
         label="Ballantine's Finest 1 Litre",
         short_label="Ballantine's Finest 1L",
         search_term="ballantines finest",
-        name_tokens=("ballantine", "finest"),
+        name_tokens=("ballantine",),
         size_tokens=SIZE_1L,
-        exclude_tokens=("700",),
+        exclude_tokens=(*_BALLANTINES_AGED, "700", "500"),
         brief=True,
     ),
     ProductSpec(
