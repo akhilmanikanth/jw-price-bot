@@ -145,8 +145,12 @@ def _brief_segments(
     previous_prices: dict[str, float],
     include_links: bool,
 ) -> tuple[str, list[str]]:
-    """-> (signal, [segment, ...]) where signal drives the line icon."""
-    signal_rank = {"error": 0, "oos": 1, "up": 2, "down": 3, "new": 4, "same": 5}
+    """-> (signal, [segment, ...]) where signal drives the line icon.
+
+    Forcing signals (error/up/down/new) render their own line; "oos" and
+    "same" are stable and collapse into the shared no-change line.
+    """
+    signal_rank = {"error": 0, "up": 1, "down": 2, "new": 3, "oos": 4, "same": 5}
     signal = "same"
     segments: list[str] = []
 
@@ -219,10 +223,14 @@ def build_message(
         for key, label, results in watch:
             signal, segments = _brief_segments(results, previous_prices, include_links)
             short = esc(_short_label(key, label))
-            if signal == "same":
+            if signal in {"same", "oos"}:
+                # Stable states collapse: a bottle a retailer simply doesn't
+                # list shouldn't shout every single week.
                 good = [r for r in results if r.ok]
                 cheapest = min(good, key=lambda r: r.price) if good else None  # type: ignore[arg-type]
-                unchanged.append(f"{short} {money(cheapest.price) if cheapest else 'N/A'}")
+                unchanged.append(
+                    f"{short} {money(cheapest.price)}" if cheapest else f"{short} not listed"
+                )
             else:
                 lines.append(f"{SIGNAL_ICONS[signal]} {short}: " + " · ".join(segments))
         if unchanged:
