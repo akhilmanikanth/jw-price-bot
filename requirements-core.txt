@@ -1,0 +1,6 @@
+# Minimal set for the scheduled GitHub Actions run (`python main.py check`).
+requests>=2.31,<3
+beautifulsoup4>=4.12,<5
+lxml>=5.0
+playwright>=1.44
+python-dotenv>=1.0

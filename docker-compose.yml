@@ -1,0 +1,11 @@
+services:
+  jwbot:
+    build: .
+    container_name: jwbot
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TZ: ${TIMEZONE:-Australia/Sydney}
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs

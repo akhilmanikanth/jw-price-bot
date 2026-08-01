@@ -1,0 +1,11 @@
+# Core scraping + notification (everything the weekly check needs)
+requests>=2.31,<3
+beautifulsoup4>=4.12,<5
+lxml>=5.0
+playwright>=1.44
+python-dotenv>=1.0
+
+# Long-running bot mode (/check command + APScheduler). Not needed by GitHub Actions.
+python-telegram-bot>=21.0,<23
+APScheduler>=3.10,<4
+tzdata>=2024.1 ; sys_platform == "win32"
