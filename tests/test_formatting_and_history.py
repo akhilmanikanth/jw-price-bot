@@ -217,6 +217,103 @@ class TestFormatting:
         assert "&lt;script&gt;" in msg
 
 
+class TestPriceSince:
+    def _seed(self, tmp_path, rows):
+        history = History(tmp_path / "history.json")
+        for run_key, price, err in rows:
+            history.upsert(make_report([(BWS_BLACK, "BWS", price, err)], run_key=run_key))
+        return history
+
+    def test_streak_and_since_date(self, tmp_path):
+        history = self._seed(
+            tmp_path,
+            [("2026-07-17", 63.0, None), ("2026-07-24", 55.0, None), ("2026-07-31", 55.0, None)],
+        )
+        since = history.price_since({BWS_BLACK: 55.0})
+        assert since == {BWS_BLACK: ("2026-07-24", 2)}
+
+    def test_errored_week_does_not_break_streak(self, tmp_path):
+        history = self._seed(
+            tmp_path,
+            [("2026-07-17", 55.0, None), ("2026-07-24", None, "HTTP 403"), ("2026-07-31", 55.0, None)],
+        )
+        since = history.price_since({BWS_BLACK: 55.0})
+        assert since == {BWS_BLACK: ("2026-07-17", 2)}
+
+    def test_changed_price_has_no_since(self, tmp_path):
+        history = self._seed(tmp_path, [("2026-07-31", 63.0, None)])
+        assert history.price_since({BWS_BLACK: 55.0}) == {}
+
+    def test_manual_runs_ignored(self, tmp_path):
+        history = History(tmp_path / "history.json")
+        history.upsert(make_report([(BWS_BLACK, "BWS", 55.0, None)], run_key="2026-07-31"))
+        history.upsert(
+            make_report(
+                [(BWS_BLACK, "BWS", 49.0, None)], run_key="2026-08-01-manual-1", manual=True
+            )
+        )
+        assert history.price_since({BWS_BLACK: 55.0}) == {
+            BWS_BLACK: ("2026-07-31", 1)
+        }
+
+    def test_legacy_alias_rows_extend_the_streak(self, tmp_path):
+        history = History(tmp_path / "history.json")
+        history.upsert(make_report([("bws", "BWS", 55.0, None)], run_key="2026-07-24"))
+        history.upsert(make_report([(BWS_BLACK, "BWS", 55.0, None)], run_key="2026-07-31"))
+        since = history.price_since(
+            {BWS_BLACK: 55.0}, reverse_aliases={BWS_BLACK: "bws"}
+        )
+        assert since == {BWS_BLACK: ("2026-07-24", 2)}
+
+    def test_since_appears_in_message(self):
+        report = make_report([(BWS_BLACK, "BWS", 55.0, None)])
+        msg = build_message(
+            report,
+            previous_prices={BWS_BLACK: 55.0},
+            price_since={BWS_BLACK: ("2026-06-12", 8)},
+        )
+        assert "since 12 Jun (8 wk)" in msg
+
+    def test_no_since_when_price_moved(self):
+        report = make_report([(BWS_BLACK, "BWS", 55.0, None)])
+        msg = build_message(
+            report,
+            previous_prices={BWS_BLACK: 60.0},
+            price_since={BWS_BLACK: ("2026-06-12", 8)},
+        )
+        assert "since 12 Jun" not in msg
+        assert "\U0001F53B" in msg
+
+
+class TestTargetsInMessage:
+    def test_target_hit_line(self):
+        report = make_report(
+            [("bws:jw-black-1l", "BWS", 79.0, None), (BWS_BLACK, "BWS", 55.0, None)]
+        )
+        msg = build_message(report, previous_prices={}, targets={"jw-black-1l": 80.0})
+        assert "Target hit!" in msg
+        assert "Black Label 1L $79.00" in msg
+        assert "(target $80.00)" in msg
+
+    def test_no_target_line_when_above(self):
+        report = make_report([("bws:jw-black-1l", "BWS", 97.0, None)])
+        msg = build_message(report, previous_prices={}, targets={"jw-black-1l": 80.0})
+        assert "Target hit" not in msg
+
+
+class TestOnSpecialFlag:
+    def test_special_flag_rendered(self):
+        report = make_report([(BWS_BLACK, "BWS", 49.0, None)])
+        report.results[0].on_special = True
+        msg = build_message(report, previous_prices={})
+        assert "\U0001F3F7 special" in msg
+
+    def test_absent_flag_silent(self):
+        report = make_report([(BWS_BLACK, "BWS", 55.0, None)])
+        msg = build_message(report, previous_prices={})
+        assert "special" not in msg
+
+
 class TestLegacyAliases:
     def test_merge(self):
         merged = apply_legacy_aliases({"liquorland": 61.0, "bws": 55.0})
