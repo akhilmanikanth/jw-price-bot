@@ -158,7 +158,27 @@ class BWSScraper(BaseScraper):
             available=True if available is None else bool(available),
             product_name=self._name_from_payload(payload),
             strategy=f"{label}:{hint}",
+            on_special=self._looks_on_special(payload),
         )
+
+    @staticmethod
+    def _looks_on_special(payload: Any) -> bool | None:
+        """Best-effort promo flag from the API payload. None = field absent."""
+        from ..extract import iter_json_objects
+
+        saw_flag = False
+        for obj in iter_json_objects(payload):
+            for key, value in obj.items():
+                lowered = key.lower() if isinstance(key, str) else ""
+                if lowered in {"isonspecial", "onspecial", "isspecial", "ismemberoffer"}:
+                    saw_flag = True
+                    if bool(value):
+                        return True
+                elif lowered in {"promoprice", "specialprice"}:
+                    inner = value.get("Value") if isinstance(value, dict) else value
+                    if isinstance(inner, (int, float)) and inner:
+                        return True
+        return False if saw_flag else None
 
     @staticmethod
     def _candidate_names(payload: Any) -> list[str]:

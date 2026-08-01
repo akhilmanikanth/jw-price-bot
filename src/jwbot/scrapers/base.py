@@ -39,6 +39,11 @@ def registry() -> dict[str, type["BaseScraper"]]:
     return dict(_REGISTRY)
 
 
+def unregister(key: str) -> None:
+    """Remove a scraper registered at runtime (e.g. via /removebottle)."""
+    _REGISTRY.pop(key.lower(), None)
+
+
 def _token_matches_key(token: str, key: str) -> bool:
     """ENABLED_RETAILERS accepts a full key ("bws:jw-black-700"), a retailer
     ("bws" = every BWS product) or a product key ("jw-black-700" = every
@@ -182,6 +187,7 @@ class BaseScraper(ABC):
         product_name: str | None = None,
         strategy: str | None = None,
         note: str | None = None,
+        on_special: bool | None = None,
     ) -> PriceResult:
         return PriceResult(
             retailer=self.key,
@@ -192,6 +198,7 @@ class BaseScraper(ABC):
             price=round(price, 2) if price is not None else None,
             url=self.product_url,
             available=available,
+            on_special=on_special,
             note=note,
             strategy=strategy,
             scraped_at=datetime.now(self.config.tz).isoformat(timespec="seconds"),
