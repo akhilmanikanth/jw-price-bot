@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "runs": [
+    {
+      "run_key": "2026-08-01",
+      "started_at": "2026-08-01T23:53:54+10:00",
+      "finished_at": "2026-08-01T23:54:03+10:00",
+      "timezone": "Australia/Sydney",
+      "notified": true,
+      "manual": false,
+      "errors": [],
+      "results": [
+        {
+          "retailer": "liquorland",
+          "display_name": "Liquorland",
+          "product_name": "Johnnie Walker Black Label 12YO Scotch Whisky 700mL",
+          "price": 61.0,
+          "currency": "AUD",
+          "url": "https://www.liquorland.com.au/spirits/johnnie-walker-black-label-12yo-scotch-whisky-700ml_30663",
+          "available": true,
+          "error": null,
+          "note": null,
+          "strategy": "json-ld",
+          "scraped_at": "2026-08-01T23:54:03+10:00",
+          "duration_s": 9.24
+        },
+        {
+          "retailer": "bws",
+          "display_name": "BWS",
+          "product_name": "Johnnie Walker Black Label 12 Year Old Blended Scotch Whisky 700m",
+          "price": 55.0,
+          "currency": "AUD",
+          "url": "https://bws.com.au/product/9067/johnnie-walker-black-label-scotch-whisky-700ml",
+          "available": true,
+          "error": null,
+          "note": null,
+          "strategy": "api-product:preferred:Price",
+          "scraped_at": "2026-08-01T23:53:55+10:00",
+          "duration_s": 1.57
+        }
+      ]
+    }
+  ]
+}
