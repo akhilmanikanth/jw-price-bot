@@ -106,6 +106,50 @@ class History:
                     prices[key] = float(price)
         return prices
 
+    def price_since(
+        self,
+        current: dict[str, float],
+        exclude_run_key: str | None = None,
+        reverse_aliases: dict[str, str] | None = None,
+    ) -> dict[str, tuple[str, int]]:
+        """For each listing priced now: (date its current price has held since, prior runs held).
+
+        Walks prior scheduled runs newest -> oldest. A week where the listing
+        errored or is absent (e.g. bot-blocked) does not break the streak; a
+        different price - or an explicit out-of-stock reading - does. Manual
+        checks are ignored so the answer stays week-on-week.
+        `reverse_aliases` maps a modern key to its pre-multi-product history key.
+        """
+        reverse_aliases = reverse_aliases or {}
+        out: dict[str, tuple[str, int]] = {}
+        for key, price in current.items():
+            if price is None:
+                continue
+            alt = reverse_aliases.get(key)
+            since: str | None = None
+            held = 0
+            for raw in reversed(self._data.get("runs", [])):
+                if exclude_run_key and raw.get("run_key") == exclude_run_key:
+                    continue
+                if raw.get("manual"):
+                    continue
+                row = None
+                for result in raw.get("results", []):
+                    rk = result.get("retailer")
+                    if rk == key or (alt and rk == alt):
+                        row = result
+                        break
+                if row is None or row.get("error"):
+                    continue  # unknown that week - don't break the streak
+                p = row.get("price")
+                if p is None or abs(float(p) - float(price)) >= 0.005:
+                    break
+                held += 1
+                since = (raw.get("run_key") or raw.get("started_at") or "")[:10]
+            if since and held:
+                out[key] = (since, held)
+        return out
+
     def price_series(self, retailer: str, limit: int = 12) -> list[tuple[str, float]]:
         out: list[tuple[str, float]] = []
         for raw in self._data.get("runs", []):

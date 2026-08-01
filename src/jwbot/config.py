@@ -79,8 +79,14 @@ class Config:
         "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     )
 
+    # --- Local bot mode ---
+    # The weekly Friday message is sent by the GitHub Actions run; a machine
+    # running `main.py bot` only answers commands unless this is switched on.
+    run_weekly_job: bool = False
+
     # --- Storage / logging ---
     history_path: Path = field(default_factory=lambda: PROJECT_ROOT / "data" / "history.json")
+    targets_path: Path = field(default_factory=lambda: PROJECT_ROOT / "data" / "targets.json")
     state_path: Path = field(default_factory=lambda: PROJECT_ROOT / "data" / "state.json")
     log_dir: Path = field(default_factory=lambda: PROJECT_ROOT / "logs")
     log_level: str = "INFO"
@@ -137,7 +143,9 @@ def load_config() -> Config:
         max_retries=_env_int("MAX_RETRIES", 3),
         retry_backoff=_env_float("RETRY_BACKOFF", 2.0),
         user_agent=_env("USER_AGENT") or Config.user_agent,
+        run_weekly_job=_env_bool("RUN_WEEKLY_JOB", False),
         history_path=Path(_env("HISTORY_PATH") or (PROJECT_ROOT / "data" / "history.json")),
+        targets_path=Path(_env("TARGETS_PATH") or (PROJECT_ROOT / "data" / "targets.json")),
         state_path=Path(_env("STATE_PATH") or (PROJECT_ROOT / "data" / "state.json")),
         log_dir=Path(_env("LOG_DIR") or (PROJECT_ROOT / "logs")),
         log_level=(_env("LOG_LEVEL", "INFO") or "INFO").upper(),
