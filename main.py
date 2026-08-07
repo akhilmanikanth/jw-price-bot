@@ -34,11 +34,9 @@ def cmd_check(args: argparse.Namespace) -> int:
     if args.only_if_due and not is_due(config, grace_minutes=args.grace):
         now = datetime.now(config.tz)
         log.info(
-            "Not due right now (%s, scheduled %s %02d:%02d %s) - exiting cleanly",
+            "Not due right now (%s, scheduled %s %s) - exiting cleanly",
             now.strftime("%A %H:%M %Z"),
-            config.schedule_day_of_week,
-            config.schedule_hour,
-            config.schedule_minute,
+            config.schedule_label,
             config.timezone_name,
         )
         return 0
@@ -105,8 +103,7 @@ def cmd_test_telegram(args: argparse.Namespace) -> int:
     log.info("Authenticated as @%s (%s)", me.get("username"), me.get("id"))
     notifier.send_message(
         "✅ <b>Johnnie Walker price bot</b> is connected.\n"
-        f"Weekly check: {config.schedule_day_of_week.title()} "
-        f"{config.schedule_hour:02d}:{config.schedule_minute:02d} {config.timezone_name}"
+        f"Price checks: {config.schedule_label} {config.timezone_name}"
     )
     print(f"Test message sent to chat {chat_id}")
     return 0

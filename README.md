@@ -1,6 +1,6 @@
 # Whisky Price Bot
 
-Checks whisky prices at **Liquorland** and **BWS** every **Friday at 3:00 PM
+Checks whisky prices at **Liquorland** and **BWS** every **Tuesday and Friday at 3:00 PM
 Australia/Sydney**, and sends one message to one private Telegram chat.
 
 Tracked bottles (see `src/jwbot/products.py`):
@@ -54,8 +54,13 @@ silently), and collapse into a single "No change" line otherwise.
   hit!" line at the top of any check that reaches your price.
 - **"At this price since"** - unchanged prices show how long they've held
   (e.g. `since 12 Jun (7 wk)`), plus a best-effort "special" flag from BWS.
-- **Loud failure, twice over** - the weekly workflow messages you if it fails,
-  and a separate Friday-evening watchdog messages you if it never ran at all.
+- **Loud failure, twice over** - the workflow messages you if it fails, and a
+  separate evening watchdog messages you if it never ran at all.
+- **Bulk deals** - spots "2 for $110" style offers and shows the real
+  per-bottle price alongside the single price.
+- **Blocks are not errors** - when a retailer's bot protection stops a check,
+  the message shows the last known price and when it was seen, instead of a
+  wall of scraper diagnostics.
 - **Release notes from the bot** - every code push to `main` triggers a short
   "updated to vX.Y.Z - here's what changed" Telegram message.
 - **Layered scraping** - retailer JSON APIs first, then static HTML (JSON-LD,
@@ -110,7 +115,7 @@ The scheduled workflow lives in `.github/workflows/weekly-price-check.yml`.
 | `TELEGRAM_CHAT_ID` | your numeric chat id |
 
 Optional repository **variables** (same page, *Variables* tab): `TIMEZONE`,
-`SCHEDULE_DAY_OF_WEEK`, `SCHEDULE_HOUR`, `SCHEDULE_MINUTE`, `ENABLED_RETAILERS`.
+`SCHEDULE_DAYS`, `SCHEDULE_HOUR`, `SCHEDULE_MINUTE`, `ENABLED_RETAILERS`.
 
 **Test it:** *Actions*, *Weekly price check*, *Run workflow*. Tick **dry_run**
 first to check the scrapers without sending anything; the log prints the exact
@@ -119,7 +124,7 @@ message and the raw HTML is uploaded as an artifact if something fails.
 ### About the schedule
 
 Sydney is UTC+11 in summer (AEDT) and UTC+10 in winter (AEST), so the workflow
-registers **both** UTC slots - `0 4 * * 5` and `0 5 * * 5` - and `--only-if-due`
+registers **both** UTC slots for **each** run day (Tue + Fri) and `--only-if-due`
 runs the check only in the slot that is actually 3:00 PM locally. GitHub cron can
 be delayed by tens of minutes under load, so the "due" window extends 2.5 hours
 *past* 3:00 PM but only 15 minutes before it. If both slots somehow run, the
@@ -191,7 +196,7 @@ Everything comes from environment variables (or a `.env` file). See
 | `TELEGRAM_CHAT_ID` | - | **required**, the only chat that receives messages |
 | `TELEGRAM_ALLOWED_CHAT_IDS` | - | extra chat ids allowed to use `/check` |
 | `TIMEZONE` | `Australia/Sydney` | any IANA zone |
-| `SCHEDULE_DAY_OF_WEEK` | `fri` | `mon` to `sun` |
+| `SCHEDULE_DAYS` | `tue,fri` | comma separated, `mon` to `sun` (old `SCHEDULE_DAY_OF_WEEK` still works) |
 | `SCHEDULE_HOUR` / `SCHEDULE_MINUTE` | `15` / `0` | 24-hour clock, local time |
 | `ENABLED_RETAILERS` | *(all)* | retailer (`bws`), product (`jw-black-700`) or exact listing (`bws:jw-black-700`) tokens, comma separated |
 | `USE_PLAYWRIGHT` | `true` | set `false` to skip the browser layer |
@@ -317,9 +322,9 @@ src/jwbot/
 tests/                       offline unit tests
 scripts/install_task.ps1     Windows: run the live bot as an auto-start task
 .github/workflows/
-  weekly-price-check.yml     Friday cron + failure alert
+  weekly-price-check.yml     Tue + Fri cron + failure alert
   release-notes.yml          "bot updated to vX.Y.Z" message on every push
-  watchdog.yml               Friday-evening dead-man's switch
+  watchdog.yml               Tue/Fri evening dead-man's switch
   tests.yml                  pytest on every push
 ```
 
