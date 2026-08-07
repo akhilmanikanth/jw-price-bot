@@ -1,7 +1,12 @@
 """Bulk-offer parsing and bot-protection detection."""
 
 from jwbot.config import Config
-from jwbot.extract import find_multibuys, find_multibuys_in_html, looks_blocked
+from jwbot.extract import (
+    find_multibuys,
+    find_multibuys_in_html,
+    find_structured_multibuys,
+    looks_blocked,
+)
 from jwbot.models import MultiBuy, PriceResult
 from jwbot.scrapers import registry
 from jwbot.scrapers.base import BotWallBlocked, ScrapeFailure
@@ -80,6 +85,62 @@ class TestMultiBuyParsing:
             "</script></head><body>" + "x" * 300 + "</body></html>"
         )
         assert find_multibuys_in_html(html)[0][:2] == (2, 110.0)
+
+
+class TestStructuredMultiBuy:
+    """The exact shape BWS returned for Black Label 700mL on 2026-08-07."""
+
+    BWS_TAG = {
+        "Stockcode": 9067,
+        "Price": 69.0,
+        "FixedPricePromoTag": {
+            "PromotionalPrice": 110.0,
+            "SavedAmount": 28.0,
+            "TopText": "2 for",
+            "BottomText": "",
+            "ProductMultiple": 2,
+        },
+    }
+
+    def test_reads_the_real_bws_tag(self):
+        deals = find_structured_multibuys(self.BWS_TAG, single_price=69.0)
+        assert deals == [(2, 110.0, "2 for")]
+
+    def test_quantity_from_toptext_when_multiple_missing(self):
+        payload = {"FixedPricePromoTag": {"PromotionalPrice": 110.0, "TopText": "2 for"}}
+        assert find_structured_multibuys(payload, single_price=69.0)[0][:2] == (2, 110.0)
+
+    def test_empty_promo_tag_is_ignored(self):
+        payload = {
+            "Price": 85.0,
+            "FixedPricePromoTag": {
+                "PromotionalPrice": 0, "SavedAmount": 0,
+                "TopText": None, "BottomText": None, "ProductMultiple": 0,
+            },
+        }
+        assert find_structured_multibuys(payload, single_price=85.0) == []
+
+    def test_rejects_a_per_unit_promotional_price(self):
+        """If PromotionalPrice were per bottle, 2 for $55 would be nonsense."""
+        payload = {"FixedPricePromoTag": {"PromotionalPrice": 55.0, "ProductMultiple": 2}}
+        assert find_structured_multibuys(payload, single_price=69.0) == []
+
+    def test_rejects_a_total_above_buying_them_singly(self):
+        payload = {"FixedPricePromoTag": {"PromotionalPrice": 200.0, "ProductMultiple": 2}}
+        assert find_structured_multibuys(payload, single_price=69.0) == []
+
+    def test_saved_amount_is_consistent(self):
+        """69 x 2 - 28 == 110: the arithmetic Alfred verified in-store."""
+        tag = self.BWS_TAG["FixedPricePromoTag"]
+        assert 69.0 * tag["ProductMultiple"] - tag["SavedAmount"] == tag["PromotionalPrice"]
+
+    def test_end_to_end_through_the_scraper(self):
+        scraper = registry()["bws:jw-black-700"](make_config())
+        result = scraper._from_api_payload({"Products": [self.BWS_TAG]}, "api-product")
+        assert result.price == 69.0
+        deal = result.best_multibuy
+        assert deal is not None
+        assert deal.quantity == 2 and deal.total_price == 110.0 and deal.unit_price == 55.0
 
 
 class TestMultiBuyModel:
