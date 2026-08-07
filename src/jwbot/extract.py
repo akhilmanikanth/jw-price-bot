@@ -95,6 +95,43 @@ def looks_out_of_stock(text: str) -> bool:
     return any(marker in lowered for marker in OUT_OF_STOCK_MARKERS)
 
 
+# Fingerprints of bot-protection interstitials. Hitting one is not a bug in the
+# scraper and must never be reported as though the retailer broke.
+BOT_WALL_MARKERS = (
+    "shieldsquare",
+    "captcha",
+    "attention required",
+    "are you a human",
+    "verify you are human",
+    "checking your browser",
+    "access denied",
+    "request unsuccessful",
+    "incapsula",
+    "perimeterx",
+    "px-captcha",
+    "cf-browser-verification",
+    "ddos protection",
+    "unusual traffic",
+)
+
+
+def looks_blocked(html: str) -> bool:
+    """True when a response is a bot-protection wall rather than a real page."""
+    if not html:
+        return False
+    head = html[:60000].lower()
+    # A real product page is big and mentions the shop; walls are small and
+    # shout about verification. Require a marker, and treat tiny pages as
+    # stronger evidence so a product page merely *mentioning* captcha is safe.
+    hits = [m for m in BOT_WALL_MARKERS if m in head]
+    if not hits:
+        return False
+    if len(html) < 60000:
+        return True
+    # Large page: only trust the unambiguous markers.
+    return any(m in head for m in ("shieldsquare", "px-captcha", "cf-browser-verification"))
+
+
 # --------------------------------------------------------------------------- #
 # JSON walking
 # --------------------------------------------------------------------------- #
@@ -143,6 +180,97 @@ def find_price_in_json(node: Any, prefer_keys: Iterable[str] = ()) -> tuple[floa
                 if price is not None:
                     return price, f"{label}:{raw_key}"
     return None, None
+
+
+# --------------------------------------------------------------------------- #
+# Multi-buy / bulk offers ("2 for $110")
+# --------------------------------------------------------------------------- #
+# Retailers describe bulk deals in free text far more consistently than in
+# structured fields, so the text is the source of truth: quantity and TOTAL
+# come from the phrase, and the per-bottle price is derived by division.
+_MB_N_FOR = re.compile(
+    r"(?:\bany\s+|\bbuy\s+|\bmix\s+(?:any\s+)?)?\b(\d{1,2})\s*(?:for|/)\s*\$\s*(\d{1,4}(?:\.\d{1,2})?)\b",
+    re.I,
+)
+_MB_EACH_WHEN = re.compile(
+    r"\$\s*(\d{1,4}(?:\.\d{1,2})?)\s*(?:ea\b\.?|each\b)[^$]{0,40}?\b(?:buy|purchase|of|any)\s*(\d{1,2})\b",
+    re.I,
+)
+MAX_MULTIBUY_QTY = 12
+
+# Keys whose string values are worth scanning for offer wording.
+_OFFER_TEXT_KEYS = {
+    "message", "description", "label", "text", "offerdescription", "promotiondescription",
+    "promotext", "promomessage", "displaytext", "name", "title", "shortdescription",
+    "pricemessage", "badgetext", "offertext",
+}
+
+
+def find_multibuys(node: Any) -> list[tuple[int, float, str]]:
+    """Find bulk offers anywhere in a payload.
+
+    Returns a deduplicated list of (quantity, total_price, source_text),
+    cheapest per-bottle first. Quantity 1 phrases ("1 for $69") are ignored -
+    that is the single price, not a deal.
+    """
+    found: dict[tuple[int, float], str] = {}
+
+    def consider(text: str) -> None:
+        snippet = " ".join(text.split())[:120]
+        for match in _MB_N_FOR.finditer(text):
+            try:
+                qty = int(match.group(1))
+                total = float(match.group(2))
+            except (TypeError, ValueError):
+                continue
+            if 2 <= qty <= MAX_MULTIBUY_QTY and is_plausible_price(total):
+                found.setdefault((qty, total), snippet)
+        for match in _MB_EACH_WHEN.finditer(text):
+            try:
+                unit = float(match.group(1))
+                qty = int(match.group(2))
+            except (TypeError, ValueError):
+                continue
+            total = round(unit * qty, 2)
+            if 2 <= qty <= MAX_MULTIBUY_QTY and is_plausible_price(total):
+                found.setdefault((qty, total), snippet)
+
+    for obj in iter_json_objects(node):
+        for raw_key, raw_value in obj.items():
+            if not isinstance(raw_value, str) or not raw_value.strip():
+                continue
+            key = str(raw_key).lower().replace("_", "").replace(" ", "")
+            if key not in _OFFER_TEXT_KEYS and "promo" not in key and "offer" not in key:
+                continue
+            consider(raw_value)
+
+    return sorted(
+        ((qty, total, text) for (qty, total), text in found.items()),
+        key=lambda item: item[1] / item[0],
+    )
+
+
+def find_multibuys_in_html(html: str) -> list[tuple[int, float, str]]:
+    """Same as find_multibuys but for rendered product pages."""
+    soup = BeautifulSoup(html, "lxml")
+    offers: dict[tuple[int, float], str] = {}
+    for label, payload in _script_payloads(soup):  # noqa: B007 - label unused
+        for qty, total, text in find_multibuys(payload):
+            offers.setdefault((qty, total), text)
+    # Visible promo wording, e.g. a "2 for $110" badge on the page.
+    text = soup.get_text(" ", strip=True)[:40000]
+    for match in _MB_N_FOR.finditer(text):
+        try:
+            qty, total = int(match.group(1)), float(match.group(2))
+        except (TypeError, ValueError):
+            continue
+        if 2 <= qty <= MAX_MULTIBUY_QTY and is_plausible_price(total):
+            start = max(0, match.start() - 40)
+            offers.setdefault((qty, total), " ".join(text[start : match.end() + 20].split())[:120])
+    return sorted(
+        ((qty, total, t) for (qty, total), t in offers.items()),
+        key=lambda item: item[1] / item[0],
+    )
 
 
 def find_availability_in_json(node: Any) -> bool | None:

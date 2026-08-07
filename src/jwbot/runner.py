@@ -43,21 +43,23 @@ def is_due(
     grace_minutes: int = 150,
     early_minutes: int = 15,
 ) -> bool:
-    """True when `moment` sits inside the scheduled window.
+    """True when `moment` sits inside a scheduled window (any configured day).
 
     The window is deliberately asymmetric: [target - 15min, target + grace].
     GitHub Actions cron can be delayed by tens of minutes under load, so a
-    generous *late* tolerance keeps the weekly run reliable, while the tight
-    *early* tolerance stops the UTC+10 cron slot firing an hour early during
-    AEST. Firing twice inside one window is harmless - the duplicate guard in
+    generous *late* tolerance keeps the run reliable, while the tight *early*
+    tolerance stops the UTC+10 cron slot firing an hour early during AEST.
+    Firing twice inside one window is harmless - the duplicate guard in
     `run_check` catches it.
     """
     now = moment or datetime.now(config.tz)
-    target_day = DAY_MAP.get(config.schedule_day_of_week.lower()[:3])
-    if target_day is None:
-        log.warning("Unrecognised SCHEDULE_DAY_OF_WEEK=%r; treating as due", config.schedule_day_of_week)
+    target_days = {
+        DAY_MAP[d.lower()[:3]] for d in config.schedule_days if d.lower()[:3] in DAY_MAP
+    }
+    if not target_days:
+        log.warning("No usable days in SCHEDULE_DAYS=%r; treating as due", config.schedule_days)
         return True
-    if now.weekday() != target_day:
+    if now.weekday() not in target_days:
         return False
     target = now.replace(
         hour=config.schedule_hour, minute=config.schedule_minute, second=0, microsecond=0
@@ -174,10 +176,17 @@ def _run_locked(
         history.previous_prices(exclude_run_key=key, include_manual=manual)
     )
     current_prices = {r.retailer: r.price for r in report.results if r.price is not None}
+    reverse_aliases = {new: old for old, new in LEGACY_KEY_ALIASES.items()}
     since = history.price_since(
-        current_prices,
-        exclude_run_key=key,
-        reverse_aliases={new: old for old, new in LEGACY_KEY_ALIASES.items()},
+        current_prices, exclude_run_key=key, reverse_aliases=reverse_aliases
+    )
+    # Anything that errored still deserves a number on the phone: fall back to
+    # the last price we ever saw for that listing.
+    unresolved = [r.retailer for r in report.results if r.error]
+    last_known = (
+        history.last_known(unresolved, exclude_run_key=key, reverse_aliases=reverse_aliases)
+        if unresolved
+        else {}
     )
     targets = load_targets(config.targets_path)
     message = build_message(
@@ -186,6 +195,7 @@ def _run_locked(
         checked_at=now,
         price_since=since,
         targets=targets,
+        last_known=last_known,
     )
 
     log.info("Message built (%d chars)", len(message))

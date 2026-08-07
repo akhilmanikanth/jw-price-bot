@@ -1,4 +1,12 @@
-"""Build the Telegram message."""
+"""Build the Telegram message.
+
+Layout rules, in priority order:
+  1. Lead with what he acts on: target hits, then the cheapest price per bottle.
+  2. Call out bulk deals - "2 for $110" is the real price of a Black Label.
+  3. Show only what MOVED in the changes block; steady prices collapse to a line.
+  4. A retailer blocking us is not an error. Show the last known price and say
+     when it was seen. Raw scraper diagnostics never reach the phone.
+"""
 
 from __future__ import annotations
 
@@ -14,15 +22,7 @@ from .products import (
     apply_legacy_aliases,
 )
 
-TITLE = "Whisky Weekly Price Update"
-
-TREND_ICONS = {
-    "up": "\U0001F53A",
-    "down": "\U0001F53B",
-    "same": "➖",
-    "new": "\U0001F195",
-    "unknown": "",
-}
+TITLE = "WHISKY WATCH"
 
 
 def esc(text: str) -> str:
@@ -34,6 +34,8 @@ def esc(text: str) -> str:
 def money(value: float | None) -> str:
     if value is None:
         return "N/A"
+    if abs(value - round(value)) < 0.005:
+        return f"${value:,.0f}"  # "$61" reads faster than "$61.00"
     return f"${value:,.2f}"
 
 
@@ -46,6 +48,34 @@ def format_check_time(moment: datetime) -> str:
     tzname = moment.tzname() or ""
     suffix = f" ({tzname})" if tzname else ""
     return f"{day}, {date} - {clock}{suffix}"
+
+
+def _short_when(stamp: str, moment: datetime) -> str:
+    """'1 Aug' / 'today' / 'yesterday' from an ISO-ish date string."""
+    try:
+        seen = datetime.fromisoformat(stamp[:10])
+    except ValueError:
+        return stamp
+    days = (moment.date() - seen.date()).days
+    if days <= 0:
+        return "today"
+    if days == 1:
+        return "yesterday"
+    return f"{seen.day} {seen.strftime('%b')}"
+
+
+def _age_phrase(stamp: str, moment: datetime) -> str:
+    """Compact 'how long has this price held' badge: 5d / 3w."""
+    try:
+        start = datetime.fromisoformat(stamp[:10])
+    except ValueError:
+        return ""
+    days = (moment.date() - start.date()).days
+    if days <= 0:
+        return ""
+    if days < 7:
+        return f"{days}d"
+    return f"{days // 7}w"
 
 
 # --------------------------------------------------------------------------- #
@@ -83,7 +113,7 @@ def _short_label(product_key: str, fallback: str) -> str:
     return spec.short_label if spec else fallback
 
 
-def _linkify(result: PriceResult, include_links: bool) -> str:
+def _shop(result: PriceResult, include_links: bool) -> str:
     name = esc(result.display_name)
     if include_links and result.url:
         return f'<a href="{escape(result.url)}">{name}</a>'
@@ -91,133 +121,6 @@ def _linkify(result: PriceResult, include_links: bool) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Full block (main products)
-# --------------------------------------------------------------------------- #
-def _full_block(
-    label: str,
-    results: list[PriceResult],
-    previous_prices: dict[str, float],
-    include_links: bool,
-    since_notes: dict[str, str] | None = None,
-) -> list[str]:
-    since_notes = since_notes or {}
-    lines = [f"<b>{esc(label)}</b>"]
-
-    for result in results:
-        tag = _linkify(result, include_links)
-        if result.error:
-            lines.append(f"\U0001F943 {tag}: ⚠️ unavailable (error)")
-            continue
-        if result.price is None or not result.available:
-            lines.append(f"\U0001F943 {tag}: ❌ Out of stock / not listed")
-            continue
-
-        was = previous_prices.get(result.retailer)
-        direction, delta = diff(result, was)
-        icon = TREND_ICONS.get(direction, "")
-        trend = ""
-        if direction in {"up", "down"} and delta is not None:
-            trend = f"  {icon} {'+' if delta > 0 else '−'}{money(abs(delta))} (was {money(was)})"
-        elif direction == "same":
-            trend = f"  {icon} no change"
-        elif direction == "new":
-            trend = f"  {icon} first reading"
-
-        since = since_notes.get(result.retailer)
-        if since and direction in {"same", "unknown"}:
-            trend += f" · {esc(since)}"
-        special = " \U0001F3F7 special" if result.on_special else ""
-        extra = f" <i>({esc(result.note)})</i>" if result.note else ""
-        lines.append(f"\U0001F943 {tag}: <b>{money(result.price)}</b>{special}{extra}{trend}")
-
-    good = [r for r in results if r.ok]
-    if good:
-        cheapest = min(good, key=lambda r: r.price)  # type: ignore[arg-type]
-        others = [r for r in good if r.retailer != cheapest.retailer]
-        saving = ""
-        if others:
-            gap = round(min(r.price for r in others) - cheapest.price, 2)  # type: ignore[type-var]
-            if gap > 0:
-                saving = f" (save {money(gap)})"
-        lines.append(
-            f"\U0001F4B0 <b>Cheapest today: {esc(cheapest.display_name)} - {money(cheapest.price)}</b>{saving}"
-        )
-    else:
-        lines.append("\U0001F4B0 <b>Cheapest today:</b> no prices retrieved")
-    return lines
-
-
-# --------------------------------------------------------------------------- #
-# Brief line (watch-list products)
-# --------------------------------------------------------------------------- #
-def _brief_segments(
-    results: list[PriceResult],
-    previous_prices: dict[str, float],
-    include_links: bool,
-) -> tuple[str, list[str]]:
-    """-> (signal, [segment, ...]) where signal drives the line icon.
-
-    Forcing signals (error/up/down/new) render their own line; "oos" and
-    "same" are stable and collapse into the shared no-change line.
-    """
-    signal_rank = {"error": 0, "up": 1, "down": 2, "new": 3, "oos": 4, "same": 5}
-    signal = "same"
-    segments: list[str] = []
-
-    for result in results:
-        tag = _linkify(result, include_links)
-        if result.error:
-            segments.append(f"{tag} ⚠️")
-            state = "error"
-        elif result.price is None or not result.available:
-            segments.append(f"{tag} ❌")
-            state = "oos"
-        else:
-            was = previous_prices.get(result.retailer)
-            direction, delta = diff(result, was)
-            if direction == "up":
-                segments.append(f"{tag} <b>{money(result.price)}</b> (\U0001F53A +{money(delta)})")
-                state = "up"
-            elif direction == "down":
-                segments.append(f"{tag} <b>{money(result.price)}</b> (\U0001F53B −{money(abs(delta))})")
-                state = "down"
-            elif direction == "new":
-                segments.append(f"{tag} <b>{money(result.price)}</b> \U0001F195")
-                state = "new"
-            else:
-                segments.append(f"{tag} <b>{money(result.price)}</b> ➖")
-                state = "same"
-        if signal_rank[state] < signal_rank[signal]:
-            signal = state
-
-    return signal, segments
-
-
-SIGNAL_ICONS = {
-    "error": "⚠️",
-    "oos": "❌",
-    "up": "\U0001F53A",
-    "down": "\U0001F53B",
-    "new": "\U0001F195",
-    "same": "➖",
-}
-
-
-# --------------------------------------------------------------------------- #
-def _render_since(price_since: dict[str, tuple[str, int]], moment: datetime) -> dict[str, str]:
-    """{listing key: 'since 12 Jun (7 wk)'} - only for prices that have held."""
-    notes: dict[str, str] = {}
-    for key, (iso_date, _held) in price_since.items():
-        try:
-            start = datetime.fromisoformat(iso_date)
-        except ValueError:
-            continue
-        pretty = f"{start.day} {start.strftime('%b')}"
-        weeks = (moment.date() - start.date()).days // 7
-        notes[key] = f"since {pretty} ({weeks} wk)" if weeks >= 1 else f"since {pretty}"
-    return notes
-
-
 def build_message(
     report: RunReport,
     previous_prices: dict[str, float] | None = None,
@@ -225,82 +128,153 @@ def build_message(
     include_links: bool = True,
     price_since: dict[str, tuple[str, int]] | None = None,
     targets: dict[str, float] | None = None,
+    last_known: dict[str, tuple[float, str]] | None = None,
 ) -> str:
     """Telegram HTML-formatted message."""
     previous_prices = apply_legacy_aliases(previous_prices or {})
+    price_since = price_since or {}
+    last_known = last_known or {}
     moment = checked_at or datetime.fromisoformat(report.started_at)
-    since_notes = _render_since(price_since or {}, moment)
+    groups = _group_by_product(report)
 
-    lines: list[str] = [f"\U0001F3F7 <b>{TITLE}</b>", ""]
+    lines: list[str] = [f"🥃 <b>{TITLE}</b>"]
     if report.manual:
-        lines.insert(1, "<i>Manual check</i>")
+        lines.append("⚡ <i>Manual check</i>")
+    lines.append(f"📅 {esc(format_check_time(moment))}")
 
+    # ---------------- target hits ---------------- #
     if targets:
         from .userdata import target_hits
 
         hits = target_hits(report.results, targets)
-        for result, target in hits:
-            short = _short_label(_product_key_of(result), result.product_label or "")
-            lines.append(
-                f"\U0001F3AF <b>Target hit!</b> {esc(short)} {money(result.price)} "
-                f"at {esc(result.display_name)} (target {money(target)})"
-            )
         if hits:
-            lines.append("")
-
-    groups = _group_by_product(report)
-
-    for _key, label, brief, results in groups:
-        if brief:
-            continue
-        lines.extend(_full_block(label, results, previous_prices, include_links, since_notes))
-        lines.append("")
-
-    watch = [(key, label, results) for key, label, brief, results in groups if brief]
-    if watch:
-        lines.append("\U0001F4CC <b>Also watching</b>")
-        unchanged: list[str] = []
-        for key, label, results in watch:
-            signal, segments = _brief_segments(results, previous_prices, include_links)
-            short = esc(_short_label(key, label))
-            if signal in {"same", "oos"}:
-                # Stable states collapse: a bottle a retailer simply doesn't
-                # list shouldn't shout every single week.
-                good = [r for r in results if r.ok]
-                cheapest = min(good, key=lambda r: r.price) if good else None  # type: ignore[arg-type]
-                unchanged.append(
-                    f"{short} {money(cheapest.price)}" if cheapest else f"{short} not listed"
+            lines += ["", "🎯 <b>TARGET HIT</b>"]
+            for result, target in hits:
+                short = _short_label(_product_key_of(result), result.product_label or "")
+                lines.append(
+                    f"   ✅ {esc(short)} — <b>{money(result.price)}</b> at "
+                    f"{_shop(result, include_links)} <i>(target {money(target)})</i>"
                 )
+
+    # ---------------- best price per bottle + bulk deals ---------------- #
+    best_lines: list[str] = []
+    deal_lines: list[str] = []
+    for key, label, _brief, results in groups:
+        short = esc(_short_label(key, label))
+        priced = [r for r in results if r.ok]
+        if priced:
+            cheapest = min(priced, key=lambda r: r.price)  # type: ignore[arg-type]
+            others = [r for r in priced if r.retailer != cheapest.retailer]
+            tail = ""
+            if others:
+                alt = min(others, key=lambda r: r.price)  # type: ignore[arg-type]
+                tail = f" <i>· {esc(alt.display_name)} {money(alt.price)}</i>"
+            flag = " 🏷" if cheapest.on_special else ""
+            best_lines.append(
+                f"   🥃 {short} — <b>{money(cheapest.price)}</b> "
+                f"{_shop(cheapest, include_links)}{flag}{tail}"
+            )
+        for result in results:
+            deal = result.best_multibuy
+            if deal is None:
+                continue
+            saving = ""
+            if result.price is not None:
+                per_bottle = round(result.price - deal.unit_price, 2)
+                if per_bottle > 0:
+                    saving = f" — save {money(per_bottle)}/bottle"
+            deal_lines.append(
+                f"   🎉 {deal.quantity}× {short} at {esc(result.display_name)} = "
+                f"<b>{money(deal.total_price)}</b> "
+                f"(<b>{money(deal.unit_price)}</b> each){saving}"
+            )
+
+    if best_lines:
+        lines += ["", "💰 <b>BEST PRICE NOW</b>", *best_lines]
+    if deal_lines:
+        lines += ["", "🎁 <b>BULK DEALS</b>", *deal_lines]
+
+    # ---------------- movements / steady / unavailable ---------------- #
+    moves: list[str] = []
+    steady: list[str] = []
+    stale: list[str] = []
+    not_stocked: list[str] = []
+
+    for key, label, _brief, results in groups:
+        short = esc(_short_label(key, label))
+        for result in results:
+            shop = _shop(result, include_links)
+            if result.error:
+                seen = last_known.get(result.retailer)
+                if seen:
+                    price, stamp = seen
+                    stale.append(
+                        f"   ⏸ {short} · {shop} — last seen <b>{money(price)}</b>"
+                        f" ({_short_when(stamp, moment)})"
+                    )
+                else:
+                    stale.append(f"   ⏸ {short} · {shop} — no price on record yet")
+                continue
+            if result.price is None or not result.available:
+                not_stocked.append(f"   • {short} · {shop}")
+                continue
+
+            was = previous_prices.get(result.retailer)
+            direction, delta = diff(result, was)
+            if direction == "up" and delta is not None:
+                moves.append(
+                    f"   🔺 {short} · {shop}  {money(was)} → <b>{money(result.price)}</b>"
+                    f"  <b>+{money(abs(delta))}</b>"
+                )
+            elif direction == "down" and delta is not None:
+                moves.append(
+                    f"   🔻 {short} · {shop}  {money(was)} → <b>{money(result.price)}</b>"
+                    f"  <b>−{money(abs(delta))}</b>"
+                )
+            elif direction == "new":
+                moves.append(f"   🆕 {short} · {shop}  <b>{money(result.price)}</b>  first look")
             else:
-                lines.append(f"{SIGNAL_ICONS[signal]} {short}: " + " · ".join(segments))
-        if unchanged:
-            lines.append("➖ No change: " + ", ".join(unchanged))
-        lines.append("")
+                held = price_since.get(result.retailer)
+                badge = _age_phrase(held[0], moment) if held else ""
+                age = f" <i>({badge})</i>" if badge else ""
+                steady.append(f"   {short} · {shop} {money(result.price)}{age}")
 
-    lines.append(f"\U0001F4C5 Checked: {esc(format_check_time(moment))}")
+    if moves:
+        lines += ["", "📊 <b>WHAT CHANGED</b>", *moves]
+    if steady:
+        lines += ["", "➖ <b>HOLDING STEADY</b>", *steady]
+    if not_stocked:
+        lines += ["", "🚫 <b>NOT STOCKED</b>", *not_stocked]
+    if stale:
+        lines += ["", "⏸ <b>COULDN'T CHECK TODAY</b>", *stale]
 
-    problems = [r for r in report.results if r.error]
-    if problems or report.errors:
-        lines.append("")
-        lines.append("⚠️ <b>Issues</b>")
-        for result in problems:
-            detail = (result.error or "").strip()
-            if len(detail) > 220:
-                detail = detail[:217] + "..."
-            where = esc(result.display_name)
-            what = _short_label(_product_key_of(result), result.product_label or "")
-            label = f"{where} ({esc(what)})" if what else where
-            lines.append(f"• {label}: <code>{esc(detail)}</code>")
-        for extra in report.errors:
-            trimmed = extra if len(extra) <= 220 else extra[:217] + "..."
-            lines.append(f"• <code>{esc(trimmed)}</code>")
+    # ---------------- footer ---------------- #
+    blocked_shops = sorted({r.display_name for r in report.results if r.blocked})
+    broken_shops = sorted({r.display_name for r in report.results if r.error and not r.blocked})
+    notes: list[str] = []
+    if blocked_shops:
+        count = sum(1 for r in report.results if r.blocked)
+        notes.append(
+            f"🛡 {esc(' & '.join(blocked_shops))} blocked {count} check"
+            f"{'s' if count != 1 else ''} today (bot protection) — "
+            "last known prices shown above."
+        )
+    if broken_shops:
+        notes.append(f"⚠️ {esc(' & '.join(broken_shops))} hit a real error — worth a look.")
+    for extra in report.errors:
+        trimmed = extra if len(extra) <= 160 else extra[:157] + "..."
+        notes.append(f"⚠️ {esc(trimmed)}")
+    if not report.successful:
+        notes.append("⚠️ No prices at all this run.")
+    if notes:
+        lines += ["", *notes]
 
     return "\n".join(lines)
 
 
 def build_history_message(history, listings: list[tuple[str, str]], limit: int = 8) -> str:
     """A compact '/history' style summary. `listings` = [(scraper_key, label)]."""
-    lines = ["\U0001F4C8 <b>Recent prices</b>", ""]
+    lines = ["📈 <b>Recent prices</b>", ""]
     any_data = False
     for key, display in listings:
         series = history.price_series(key, limit=limit)
@@ -309,7 +283,7 @@ def build_history_message(history, listings: list[tuple[str, str]], limit: int =
         any_data = True
         lines.append(f"<b>{esc(display)}</b>")
         for run_key, price in series:
-            lines.append(f"  {esc(run_key)}  {money(price)}")
+            lines.append(f"   {esc(run_key)}  {money(price)}")
         lines.append("")
     if not any_data:
         return "No price history recorded yet. Run /check to take the first reading."

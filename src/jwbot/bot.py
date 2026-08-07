@@ -75,8 +75,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "\U0001F943 <b>Whisky price bot</b>\n\n"
         f"Retailers: {retailers or 'none configured'}\n"
         f"Bottles: {bottles or 'none configured'}\n"
-        f"Schedule: every {config.schedule_day_of_week.title()} at "
-        f"{config.schedule_hour:02d}:{config.schedule_minute:02d} ({config.timezone_name})\n\n"
+        f"Schedule: {config.schedule_label} ({config.timezone_name})\n\n"
         "<b>Commands</b>\n"
         "/check - run a price check right now\n"
         "/last - show the most recent recorded result\n"
@@ -450,7 +449,7 @@ async def _run_scheduled(config: Config) -> None:
 def build_scheduler(config: Config) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=config.tz)
     trigger = CronTrigger(
-        day_of_week=config.schedule_day_of_week,
+        day_of_week=config.cron_day_of_week,
         hour=config.schedule_hour,
         minute=config.schedule_minute,
         timezone=config.tz,
@@ -460,7 +459,7 @@ def build_scheduler(config: Config) -> AsyncIOScheduler:
         trigger=trigger,
         args=[config],
         id="weekly_price_check",
-        name="Weekly whisky price check",
+        name="Scheduled whisky price check",
         max_instances=1,      # never overlap
         coalesce=True,        # a missed run fires once, not N times
         misfire_grace_time=3600,
@@ -515,10 +514,8 @@ def run_bot(config: Config) -> None:
 
     if config.run_weekly_job:
         log.info(
-            "Starting bot; weekly check every %s at %02d:%02d %s",
-            config.schedule_day_of_week,
-            config.schedule_hour,
-            config.schedule_minute,
+            "Starting bot; scheduled checks %s %s",
+            config.schedule_label,
             config.timezone_name,
         )
     else:

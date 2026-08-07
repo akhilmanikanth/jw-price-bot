@@ -7,7 +7,7 @@ import logging
 import os
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from .models import PriceResult, RunReport
 
@@ -148,6 +148,43 @@ class History:
                 since = (raw.get("run_key") or raw.get("started_at") or "")[:10]
             if since and held:
                 out[key] = (since, held)
+        return out
+
+    def last_known(
+        self,
+        keys: Iterable[str],
+        exclude_run_key: str | None = None,
+        reverse_aliases: dict[str, str] | None = None,
+    ) -> dict[str, tuple[float, str]]:
+        """Most recent price ever recorded per listing -> (price, run_key).
+
+        Used to show "last seen $52 on 1 Aug" instead of a scary error when a
+        retailer blocks us. Manual checks count here: any real reading is
+        better than nothing.
+        """
+        reverse_aliases = reverse_aliases or {}
+        wanted = list(keys)
+        out: dict[str, tuple[float, str]] = {}
+        for raw in reversed(self._data.get("runs", [])):
+            if exclude_run_key and raw.get("run_key") == exclude_run_key:
+                continue
+            rows = raw.get("results", [])
+            for key in wanted:
+                if key in out:
+                    continue
+                alt = reverse_aliases.get(key)
+                for result in rows:
+                    rk = result.get("retailer")
+                    if rk != key and (not alt or rk != alt):
+                        continue
+                    price = result.get("price")
+                    if price is None:
+                        continue
+                    stamp = (raw.get("run_key") or raw.get("started_at") or "")[:10]
+                    out[key] = (float(price), stamp)
+                    break
+            if len(out) == len(wanted):
+                break
         return out
 
     def price_series(self, retailer: str, limit: int = 12) -> list[tuple[str, float]]:
