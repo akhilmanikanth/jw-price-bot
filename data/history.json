@@ -245,8 +245,8 @@
     },
     {
       "run_key": "2026-08-07",
-      "started_at": "2026-08-07T14:32:23+10:00",
-      "finished_at": "2026-08-07T14:34:53+10:00",
+      "started_at": "2026-08-07T14:41:51+10:00",
+      "finished_at": "2026-08-07T14:44:20+10:00",
       "timezone": "Australia/Sydney",
       "notified": true,
       "manual": false,
@@ -268,8 +268,8 @@
           "blocked": false,
           "note": null,
           "strategy": "json-ld",
-          "scraped_at": "2026-08-07T14:32:34+10:00",
-          "duration_s": 7.42
+          "scraped_at": "2026-08-07T14:42:02+10:00",
+          "duration_s": 7.83
         },
         {
           "retailer": "liquorland:jw-black-1l",
@@ -287,8 +287,8 @@
           "blocked": false,
           "note": null,
           "strategy": "json-ld",
-          "scraped_at": "2026-08-07T14:32:53+10:00",
-          "duration_s": 16.29
+          "scraped_at": "2026-08-07T14:42:13+10:00",
+          "duration_s": 6.35
         },
         {
           "retailer": "liquorland:jw-blue-700",
@@ -302,12 +302,12 @@
           "available": false,
           "on_special": null,
           "multibuy": [],
-          "error": "sitemap: blocked by bot protection; browser-search: blocked by bot protection",
+          "error": "sitemap: blocked by bot protection; browser-search: no price found via browser-search",
           "blocked": true,
           "note": null,
           "strategy": null,
-          "scraped_at": "2026-08-07T04:33:20+00:00",
-          "duration_s": 25.16
+          "scraped_at": "2026-08-07T04:42:45+00:00",
+          "duration_s": 27.58
         },
         {
           "retailer": "liquorland:ballantines-finest-700",
@@ -325,8 +325,8 @@
           "blocked": true,
           "note": null,
           "strategy": null,
-          "scraped_at": "2026-08-07T04:33:52+00:00",
-          "duration_s": 29.33
+          "scraped_at": "2026-08-07T04:43:17+00:00",
+          "duration_s": 29.57
         },
         {
           "retailer": "liquorland:ballantines-finest-1l",
@@ -344,8 +344,8 @@
           "blocked": true,
           "note": null,
           "strategy": null,
-          "scraped_at": "2026-08-07T04:34:20+00:00",
-          "duration_s": 25.36
+          "scraped_at": "2026-08-07T04:43:46+00:00",
+          "duration_s": 25.31
         },
         {
           "retailer": "liquorland:ballantines-12-700",
@@ -363,8 +363,8 @@
           "blocked": true,
           "note": null,
           "strategy": null,
-          "scraped_at": "2026-08-07T04:34:53+00:00",
-          "duration_s": 29.72
+          "scraped_at": "2026-08-07T04:44:19+00:00",
+          "duration_s": 29.73
         },
         {
           "retailer": "bws:jw-black-700",
@@ -377,13 +377,19 @@
           "url": "https://bws.com.au/product/9067/johnnie-walker-black-label-scotch-whisky-700ml",
           "available": true,
           "on_special": true,
-          "multibuy": [],
+          "multibuy": [
+            {
+              "quantity": 2,
+              "total_price": 110.0,
+              "description": "2 for"
+            }
+          ],
           "error": null,
           "blocked": false,
           "note": null,
           "strategy": "api-product:preferred:Price",
-          "scraped_at": "2026-08-07T14:33:22+10:00",
-          "duration_s": 1.63
+          "scraped_at": "2026-08-07T14:42:47+10:00",
+          "duration_s": 2.03
         },
         {
           "retailer": "bws:jw-black-1l",
@@ -401,8 +407,8 @@
           "blocked": false,
           "note": null,
           "strategy": "api-product:preferred:Price",
-          "scraped_at": "2026-08-07T14:33:24+10:00",
-          "duration_s": 2.07
+          "scraped_at": "2026-08-07T14:42:48+10:00",
+          "duration_s": 1.05
         },
         {
           "retailer": "bws:jw-blue-700",
@@ -420,8 +426,8 @@
           "blocked": false,
           "note": null,
           "strategy": "api-product:preferred:Price",
-          "scraped_at": "2026-08-07T14:33:25+10:00",
-          "duration_s": 1.58
+          "scraped_at": "2026-08-07T14:42:49+10:00",
+          "duration_s": 1.09
         },
         {
           "retailer": "bws:ballantines-finest-700",
@@ -439,8 +445,8 @@
           "blocked": false,
           "note": null,
           "strategy": "api-search:not-listed",
-          "scraped_at": "2026-08-07T14:33:27+10:00",
-          "duration_s": 1.84
+          "scraped_at": "2026-08-07T14:42:51+10:00",
+          "duration_s": 1.32
         },
         {
           "retailer": "bws:ballantines-finest-1l",
@@ -458,8 +464,8 @@
           "blocked": false,
           "note": null,
           "strategy": "api-search:preferred:Price",
-          "scraped_at": "2026-08-07T14:33:28+10:00",
-          "duration_s": 1.2
+          "scraped_at": "2026-08-07T14:42:52+10:00",
+          "duration_s": 1.4
         },
         {
           "retailer": "bws:ballantines-12-700",
@@ -477,8 +483,8 @@
           "blocked": false,
           "note": null,
           "strategy": "api-search:not-listed",
-          "scraped_at": "2026-08-07T14:33:29+10:00",
-          "duration_s": 1.08
+          "scraped_at": "2026-08-07T14:42:54+10:00",
+          "duration_s": 1.7
         }
       ]
     }
