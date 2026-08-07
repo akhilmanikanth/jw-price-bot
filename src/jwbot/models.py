@@ -7,6 +7,34 @@ from datetime import datetime
 from typing import Any
 
 
+@dataclass(frozen=True)
+class MultiBuy:
+    """A bulk offer, e.g. "2 for $110" - the per-bottle price is what matters."""
+
+    quantity: int
+    total_price: float
+    description: str | None = None
+
+    @property
+    def unit_price(self) -> float:
+        return round(self.total_price / self.quantity, 2)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "quantity": self.quantity,
+            "total_price": self.total_price,
+            "description": self.description,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "MultiBuy":
+        return cls(
+            quantity=int(data["quantity"]),
+            total_price=float(data["total_price"]),
+            description=data.get("description"),
+        )
+
+
 @dataclass
 class PriceResult:
     """The outcome of asking one retailer for one product's price."""
@@ -16,12 +44,14 @@ class PriceResult:
     product_key: str | None = None  # catalog key, e.g. "jw-black-700"
     product_label: str | None = None  # human label, e.g. "Johnnie Walker Black Label 700mL"
     product_name: str | None = None
-    price: float | None = None
+    price: float | None = None  # price for ONE bottle
     currency: str = "AUD"
     url: str | None = None
     available: bool = False
     on_special: bool | None = None  # best-effort promo flag (None = unknown)
+    multibuy: list[MultiBuy] = field(default_factory=list)
     error: str | None = None
+    blocked: bool = False  # True when bot protection stopped us (not a real fault)
     note: str | None = None  # e.g. "member price", "on special"
     strategy: str | None = None  # which extraction path succeeded
     scraped_at: str | None = None
@@ -31,13 +61,37 @@ class PriceResult:
     def ok(self) -> bool:
         return self.price is not None and self.available and self.error is None
 
+    @property
+    def best_multibuy(self) -> MultiBuy | None:
+        """The bulk offer with the lowest per-bottle price, if any beats single."""
+        deals = [d for d in self.multibuy if d.quantity > 1 and d.total_price > 0]
+        if not deals:
+            return None
+        best = min(deals, key=lambda d: d.unit_price)
+        if self.price is not None and best.unit_price >= self.price - 0.005:
+            return None  # not actually cheaper per bottle
+        return best
+
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        data["multibuy"] = [d.to_dict() for d in self.multibuy]
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PriceResult":
         allowed = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
-        return cls(**{k: v for k, v in data.items() if k in allowed})
+        clean = {k: v for k, v in data.items() if k in allowed}
+        deals = []
+        for raw in clean.get("multibuy") or ():
+            if isinstance(raw, MultiBuy):
+                deals.append(raw)
+                continue
+            try:
+                deals.append(MultiBuy.from_dict(raw))
+            except (KeyError, TypeError, ValueError):
+                continue
+        clean["multibuy"] = deals
+        return cls(**clean)
 
     @classmethod
     def failure(
@@ -48,6 +102,7 @@ class PriceResult:
         url: str | None = None,
         product_key: str | None = None,
         product_label: str | None = None,
+        blocked: bool = False,
     ) -> "PriceResult":
         return cls(
             retailer=retailer,
@@ -57,6 +112,7 @@ class PriceResult:
             url=url,
             available=False,
             error=error,
+            blocked=blocked,
             scraped_at=datetime.now().astimezone().isoformat(timespec="seconds"),
         )
 

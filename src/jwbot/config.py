@@ -62,7 +62,7 @@ class Config:
 
     # --- Schedule ---
     timezone_name: str = "Australia/Sydney"
-    schedule_day_of_week: str = "fri"
+    schedule_days: tuple[str, ...] = ("tue", "fri")
     schedule_hour: int = 15
     schedule_minute: int = 0
 
@@ -80,8 +80,8 @@ class Config:
     )
 
     # --- Local bot mode ---
-    # The weekly Friday message is sent by the GitHub Actions run; a machine
-    # running `main.py bot` only answers commands unless this is switched on.
+    # The scheduled message is sent by the GitHub Actions run; a machine running
+    # `main.py bot` only answers commands unless this is switched on.
     run_weekly_job: bool = False
 
     # --- Storage / logging ---
@@ -95,6 +95,26 @@ class Config:
     @property
     def tz(self) -> ZoneInfo:
         return ZoneInfo(self.timezone_name)
+
+    @property
+    def cron_day_of_week(self) -> str:
+        """APScheduler-friendly day list, e.g. "tue,fri"."""
+        return ",".join(self.schedule_days) or "fri"
+
+    @property
+    def schedule_label(self) -> str:
+        """Human wording, e.g. "Tuesday & Friday at 3:00 PM"."""
+        names = {
+            "mon": "Monday", "tue": "Tuesday", "wed": "Wednesday", "thu": "Thursday",
+            "fri": "Friday", "sat": "Saturday", "sun": "Sunday",
+        }
+        days = [names.get(d.lower()[:3], d.title()) for d in self.schedule_days]
+        if not days:
+            return "not scheduled"
+        joined = days[0] if len(days) == 1 else " & ".join([", ".join(days[:-1]), days[-1]])
+        hour = self.schedule_hour % 12 or 12
+        suffix = "AM" if self.schedule_hour < 12 else "PM"
+        return f"{joined} at {hour}:{self.schedule_minute:02d} {suffix}"
 
     @property
     def notify_chat_ids(self) -> tuple[str, ...]:
@@ -125,6 +145,14 @@ def load_config() -> Config:
     allowed_raw = _env("TELEGRAM_ALLOWED_CHAT_IDS", "")
     allowed = tuple(part.strip() for part in (allowed_raw or "").split(",") if part.strip())
 
+    # SCHEDULE_DAYS is the modern setting; SCHEDULE_DAY_OF_WEEK is honoured so
+    # an older .env or repo variable keeps working.
+    days_raw = _env("SCHEDULE_DAYS") or _env("SCHEDULE_DAY_OF_WEEK") or "tue,fri"
+    days = tuple(
+        part.strip().lower()[:3] for part in days_raw.replace(" ", ",").split(",") if part.strip()
+    )
+    days = tuple(dict.fromkeys(days)) or ("tue", "fri")
+
     dump_dir = _env("DEBUG_DUMP_DIR")
 
     return Config(
@@ -132,7 +160,7 @@ def load_config() -> Config:
         telegram_chat_id=_env("TELEGRAM_CHAT_ID"),
         allowed_chat_ids=allowed,
         timezone_name=_env("TIMEZONE", "Australia/Sydney"),
-        schedule_day_of_week=_env("SCHEDULE_DAY_OF_WEEK", "fri"),
+        schedule_days=days,
         schedule_hour=_env_int("SCHEDULE_HOUR", 15),
         schedule_minute=_env_int("SCHEDULE_MINUTE", 0),
         enabled_retailers=retailers,
