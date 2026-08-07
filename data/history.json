@@ -245,8 +245,8 @@
     },
     {
       "run_key": "2026-08-07",
-      "started_at": "2026-08-07T13:58:16+10:00",
-      "finished_at": "2026-08-07T14:00:45+10:00",
+      "started_at": "2026-08-07T14:32:23+10:00",
+      "finished_at": "2026-08-07T14:34:53+10:00",
       "timezone": "Australia/Sydney",
       "notified": true,
       "manual": false,
@@ -263,11 +263,13 @@
           "url": "https://www.liquorland.com.au/spirits/johnnie-walker-black-label-12yo-scotch-whisky-700ml_30663",
           "available": true,
           "on_special": null,
+          "multibuy": [],
           "error": null,
+          "blocked": false,
           "note": null,
           "strategy": "json-ld",
-          "scraped_at": "2026-08-07T13:58:27+10:00",
-          "duration_s": 9.57
+          "scraped_at": "2026-08-07T14:32:34+10:00",
+          "duration_s": 7.42
         },
         {
           "retailer": "liquorland:jw-black-1l",
@@ -280,11 +282,13 @@
           "url": "https://www.liquorland.com.au/spirits/johnnie-walker-black-label-12yo-scotch-whisky-1-litre_926379",
           "available": true,
           "on_special": null,
+          "multibuy": [],
           "error": null,
+          "blocked": false,
           "note": null,
           "strategy": "json-ld",
-          "scraped_at": "2026-08-07T13:58:45+10:00",
-          "duration_s": 15.8
+          "scraped_at": "2026-08-07T14:32:53+10:00",
+          "duration_s": 16.29
         },
         {
           "retailer": "liquorland:jw-blue-700",
@@ -297,11 +301,13 @@
           "url": "https://www.liquorland.com.au/spirits/johnnie-walker-blue-label-scotch-whisky-700ml_26970",
           "available": false,
           "on_special": null,
-          "error": "sitemap: no matching product among 0 sitemap URLs; browser-search: no price found via browser-search",
+          "multibuy": [],
+          "error": "sitemap: blocked by bot protection; browser-search: blocked by bot protection",
+          "blocked": true,
           "note": null,
           "strategy": null,
-          "scraped_at": "2026-08-07T03:59:14+00:00",
-          "duration_s": 25.38
+          "scraped_at": "2026-08-07T04:33:20+00:00",
+          "duration_s": 25.16
         },
         {
           "retailer": "liquorland:ballantines-finest-700",
@@ -314,11 +320,13 @@
           "url": "https://www.liquorland.com.au/spirits/ballantines-scotch-whisky-700ml_30151",
           "available": false,
           "on_special": null,
-          "error": "static-html: no price found via static-html; browser: no price found via browser; browser-search: product not found on Liquorland search page (0 product slugs seen; page title='ShieldSquare Captcha', 2 hrefs, 20003 bytes)",
+          "multibuy": [],
+          "error": "static-html: blocked by bot protection; browser: blocked by bot protection; browser-search: blocked by bot protection",
+          "blocked": true,
           "note": null,
           "strategy": null,
-          "scraped_at": "2026-08-07T03:59:46+00:00",
-          "duration_s": 29.76
+          "scraped_at": "2026-08-07T04:33:52+00:00",
+          "duration_s": 29.33
         },
         {
           "retailer": "liquorland:ballantines-finest-1l",
@@ -331,10 +339,12 @@
           "url": null,
           "available": false,
           "on_special": null,
-          "error": "sitemap: no matching product among 0 sitemap URLs; browser-search: product not found on Liquorland search page (0 product slugs seen; page title='ShieldSquare Captcha', 2 hrefs, 19999 bytes)",
+          "multibuy": [],
+          "error": "sitemap: blocked by bot protection; browser-search: blocked by bot protection",
+          "blocked": true,
           "note": null,
           "strategy": null,
-          "scraped_at": "2026-08-07T04:00:14+00:00",
+          "scraped_at": "2026-08-07T04:34:20+00:00",
           "duration_s": 25.36
         },
         {
@@ -348,11 +358,13 @@
           "url": "https://www.liquorland.com.au/spirits/ballantines-12yo-blended-scotch-whisky-700ml_4521560",
           "available": false,
           "on_special": null,
-          "error": "static-html: no price found via static-html; browser: no price found via browser; browser-search: product not found on Liquorland search page (0 product slugs seen; page title='ShieldSquare Captcha', 2 hrefs, 20013 bytes)",
+          "multibuy": [],
+          "error": "static-html: blocked by bot protection; browser: blocked by bot protection; browser-search: blocked by bot protection",
+          "blocked": true,
           "note": null,
           "strategy": null,
-          "scraped_at": "2026-08-07T04:00:45+00:00",
-          "duration_s": 29.69
+          "scraped_at": "2026-08-07T04:34:53+00:00",
+          "duration_s": 29.72
         },
         {
           "retailer": "bws:jw-black-700",
@@ -365,11 +377,13 @@
           "url": "https://bws.com.au/product/9067/johnnie-walker-black-label-scotch-whisky-700ml",
           "available": true,
           "on_special": true,
+          "multibuy": [],
           "error": null,
+          "blocked": false,
           "note": null,
           "strategy": "api-product:preferred:Price",
-          "scraped_at": "2026-08-07T13:59:15+10:00",
-          "duration_s": 1.45
+          "scraped_at": "2026-08-07T14:33:22+10:00",
+          "duration_s": 1.63
         },
         {
           "retailer": "bws:jw-black-1l",
@@ -382,11 +396,13 @@
           "url": "https://bws.com.au/product/776048/johnnie-walker-black-label-blended-scotch-whisky-1l",
           "available": true,
           "on_special": true,
+          "multibuy": [],
           "error": null,
+          "blocked": false,
           "note": null,
           "strategy": "api-product:preferred:Price",
-          "scraped_at": "2026-08-07T13:59:16+10:00",
-          "duration_s": 0.76
+          "scraped_at": "2026-08-07T14:33:24+10:00",
+          "duration_s": 2.07
         },
         {
           "retailer": "bws:jw-blue-700",
@@ -399,11 +415,13 @@
           "url": "https://bws.com.au/product/93472/johnnie-walker-blue-label-blended-scotch-whisky-700ml",
           "available": true,
           "on_special": true,
+          "multibuy": [],
           "error": null,
+          "blocked": false,
           "note": null,
           "strategy": "api-product:preferred:Price",
-          "scraped_at": "2026-08-07T13:59:17+10:00",
-          "duration_s": 0.87
+          "scraped_at": "2026-08-07T14:33:25+10:00",
+          "duration_s": 1.58
         },
         {
           "retailer": "bws:ballantines-finest-700",
@@ -416,11 +434,13 @@
           "url": "",
           "available": false,
           "on_special": null,
+          "multibuy": [],
           "error": null,
+          "blocked": false,
           "note": null,
           "strategy": "api-search:not-listed",
-          "scraped_at": "2026-08-07T13:59:18+10:00",
-          "duration_s": 1.15
+          "scraped_at": "2026-08-07T14:33:27+10:00",
+          "duration_s": 1.84
         },
         {
           "retailer": "bws:ballantines-finest-1l",
@@ -433,11 +453,13 @@
           "url": "",
           "available": true,
           "on_special": true,
+          "multibuy": [],
           "error": null,
+          "blocked": false,
           "note": null,
           "strategy": "api-search:preferred:Price",
-          "scraped_at": "2026-08-07T13:59:19+10:00",
-          "duration_s": 0.78
+          "scraped_at": "2026-08-07T14:33:28+10:00",
+          "duration_s": 1.2
         },
         {
           "retailer": "bws:ballantines-12-700",
@@ -450,11 +472,13 @@
           "url": "",
           "available": false,
           "on_special": null,
+          "multibuy": [],
           "error": null,
+          "blocked": false,
           "note": null,
           "strategy": "api-search:not-listed",
-          "scraped_at": "2026-08-07T13:59:20+10:00",
-          "duration_s": 0.96
+          "scraped_at": "2026-08-07T14:33:29+10:00",
+          "duration_s": 1.08
         }
       ]
     }
