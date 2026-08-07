@@ -12,9 +12,9 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from ..extract import find_availability_in_json, find_price_in_json
+from ..extract import find_availability_in_json, find_multibuys, find_price_in_json
 from ..http import get_json
-from ..models import PriceResult
+from ..models import MultiBuy, PriceResult
 from ..products import PRODUCTS, ProductSpec
 from .base import BaseScraper, ScrapeFailure, register
 
@@ -153,13 +153,40 @@ class BWSScraper(BaseScraper):
             raise ScrapeFailure(f"no price in {label} response")
 
         available = find_availability_in_json(payload)
+        deals = [
+            MultiBuy(quantity=q, total_price=t, description=text)
+            for q, t, text in find_multibuys(payload)
+        ]
+        self._log_offer_fields(payload)
         return self.make_result(
             price=price,
             available=True if available is None else bool(available),
             product_name=self._name_from_payload(payload),
             strategy=f"{label}:{hint}",
             on_special=self._looks_on_special(payload),
+            multibuy=deals,
         )
+
+    def _log_offer_fields(self, payload: Any) -> None:
+        """Record promo-looking fields so a real run reveals BWS's exact shape.
+
+        Bulk offers are parsed from wording ("2 for $110"); this line exists so
+        that if BWS ever describes one only in structured fields, the log shows
+        what to teach the parser next.
+        """
+        from ..extract import iter_json_objects
+
+        seen: list[str] = []
+        for obj in iter_json_objects(payload):
+            for raw_key, raw_value in obj.items():
+                key = str(raw_key).lower()
+                if not any(word in key for word in ("promo", "offer", "multibuy", "bulk", "deal")):
+                    continue
+                snippet = f"{raw_key}={str(raw_value)[:90]}"
+                if snippet not in seen:
+                    seen.append(snippet)
+        if seen:
+            self.log.info("OFFER-FIELDS %s: %s", self.key, " | ".join(seen[:8])[:600])
 
     @staticmethod
     def _looks_on_special(payload: Any) -> bool | None:

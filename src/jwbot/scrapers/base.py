@@ -17,9 +17,14 @@ from typing import Callable, Iterable, Sequence
 import requests
 
 from ..config import Config
-from ..extract import extract_price_from_html, looks_out_of_stock
+from ..extract import (
+    extract_price_from_html,
+    find_multibuys_in_html,
+    looks_blocked,
+    looks_out_of_stock,
+)
 from ..http import build_session, get_text
-from ..models import PriceResult
+from ..models import MultiBuy, PriceResult
 from ..products import ProductSpec
 
 log = logging.getLogger(__name__)
@@ -71,6 +76,14 @@ def get_scrapers(config: Config) -> list["BaseScraper"]:
 
 class ScrapeFailure(Exception):
     """Raised by a strategy when it cannot produce a price."""
+
+
+class BotWallBlocked(ScrapeFailure):
+    """The retailer served a captcha / bot-protection page instead of content.
+
+    Distinct from ScrapeFailure so the weekly message can say "couldn't check"
+    rather than shouting about a broken scraper.
+    """
 
 
 class BaseScraper(ABC):
@@ -154,6 +167,8 @@ class BaseScraper(ABC):
     def _result_from_html(self, html: str, strategy_label: str) -> PriceResult:
         if not html or len(html) < 200:
             raise ScrapeFailure("empty response body")
+        if looks_blocked(html):
+            raise BotWallBlocked("bot protection page served instead of the product")
 
         data = extract_price_from_html(
             html,
@@ -173,11 +188,16 @@ class BaseScraper(ABC):
                 )
             raise ScrapeFailure(f"no price found via {strategy_label}")
 
+        deals = [
+            MultiBuy(quantity=q, total_price=t, description=text)
+            for q, t, text in find_multibuys_in_html(html)
+        ]
         return self.make_result(
             price=price,
             available=True if available is None else bool(available),
             product_name=data.get("product_name"),
             strategy=data.get("strategy") or strategy_label,
+            multibuy=deals,
         )
 
     def make_result(
@@ -188,7 +208,18 @@ class BaseScraper(ABC):
         strategy: str | None = None,
         note: str | None = None,
         on_special: bool | None = None,
+        multibuy: list[MultiBuy] | None = None,
     ) -> PriceResult:
+        deals = list(multibuy or [])
+        if price is not None and deals:
+            # A "deal" that is not cheaper per bottle than the single price is
+            # noise (retailers advertise "1 for $69" the same way).
+            deals = [d for d in deals if d.unit_price < round(price, 2) - 0.005]
+        for deal in deals:
+            self.log.info(
+                "MULTIBUY %s: %d for $%.2f ($%.2f each) from %r",
+                self.key, deal.quantity, deal.total_price, deal.unit_price, deal.description,
+            )
         return PriceResult(
             retailer=self.key,
             display_name=self.display_name,
@@ -199,6 +230,7 @@ class BaseScraper(ABC):
             url=self.product_url,
             available=available,
             on_special=on_special,
+            multibuy=deals,
             note=note,
             strategy=strategy,
             scraped_at=datetime.now(self.config.tz).isoformat(timespec="seconds"),
@@ -227,11 +259,17 @@ class BaseScraper(ABC):
         """Run every strategy until one yields a result. Never raises."""
         started = time.monotonic()
         errors: list[str] = []
+        blocked = False
 
         for name, func in self.strategies():
             self.log.info("Trying strategy '%s'", name)
             try:
                 result = func()
+            except BotWallBlocked as exc:
+                self.log.warning("Strategy '%s' hit bot protection: %s", name, exc)
+                errors.append(f"{name}: blocked by bot protection")
+                blocked = True
+                continue
             except ScrapeFailure as exc:
                 self.log.warning("Strategy '%s' found nothing: %s", name, exc)
                 errors.append(f"{name}: {exc}")
@@ -264,7 +302,10 @@ class BaseScraper(ABC):
             return result
 
         message = "; ".join(errors) or "all strategies failed"
-        self.log.error("Could not get a price: %s", message)
+        if blocked:
+            self.log.warning("Blocked by bot protection: %s", message)
+        else:
+            self.log.error("Could not get a price: %s", message)
         failure = PriceResult.failure(
             self.key,
             self.display_name,
@@ -272,6 +313,7 @@ class BaseScraper(ABC):
             self.product_url or None,
             product_key=self.product.key if self.product else None,
             product_label=self.product.label if self.product else None,
+            blocked=blocked,
         )
         failure.duration_s = round(time.monotonic() - started, 2)
         return failure

@@ -15,10 +15,11 @@ import threading
 from typing import Callable
 from urllib.parse import quote_plus
 
+from ..extract import looks_blocked
 from ..http import get_text, polite_sleep
 from ..models import PriceResult
 from ..products import PRODUCTS, ProductSpec
-from .base import BaseScraper, ScrapeFailure, register
+from .base import BaseScraper, BotWallBlocked, ScrapeFailure, register
 
 # Liquorland's bot protection (ShieldSquare) flags parallel bursts. All
 # Liquorland scrapers share this lock so their fetches run one at a time,
@@ -126,7 +127,7 @@ class LiquorlandScraper(BaseScraper):
     def fetch(self) -> PriceResult:
         """Serialise all Liquorland traffic - parallel bursts trip ShieldSquare."""
         with _LL_FETCH_LOCK:
-            polite_sleep(1.5, 3.5)
+            polite_sleep(2.0, 5.0)
             return super().fetch()
 
     def strategies(self) -> list[tuple[str, Callable[[], PriceResult]]]:
@@ -146,6 +147,10 @@ class LiquorlandScraper(BaseScraper):
         """Resolve the product URL from Liquorland's sitemaps, then scrape it."""
         assert self.product is not None
         paths = _load_sitemap_paths(self.session, self.config.http_timeout, self.log)
+        if not paths:
+            # Liquorland's real sitemap lists thousands of products; an empty
+            # one means the bot wall served us a stub, not that the shop is bare.
+            raise BotWallBlocked("sitemap served empty (bot protection)")
         match = None
         for path in paths:
             slug = path.rsplit("/", 1)[-1]
@@ -230,6 +235,8 @@ class LiquorlandScraper(BaseScraper):
             wait_after_load_ms=4000,
         ) as html:
             self._dump(html, "search")
+            if looks_blocked(html):
+                raise BotWallBlocked("search page replaced by a captcha")
             path = self._pick_product_link(html)
             if not path:
                 slugs = self._seen_slugs(html)
