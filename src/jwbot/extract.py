@@ -250,6 +250,72 @@ def find_multibuys(node: Any) -> list[tuple[int, float, str]]:
     )
 
 
+# Structured bulk offers. BWS/Endeavour splits the deal across fields:
+#   FixedPricePromoTag: {"PromotionalPrice": 110.0, "SavedAmount": 28.0,
+#                        "TopText": "2 for", "ProductMultiple": 2}
+# so neither the quantity nor the total is a parseable phrase on its own.
+_QTY_KEYS = {
+    "productmultiple", "multiple", "quantity", "qty", "minimumquantity",
+    "promotionalquantity", "multibuyquantity", "groupsize",
+}
+_PROMO_TOTAL_KEYS = {"promotionalprice", "fixedprice", "multibuyprice", "grouppricevalue"}
+_QTY_TEXT_RE = re.compile(r"\b(\d{1,2})\s*(?:for|x)\b", re.I)
+
+
+def find_structured_multibuys(
+    node: Any, single_price: float | None = None
+) -> list[tuple[int, float, str]]:
+    """Bulk offers described by fields rather than a sentence.
+
+    `single_price` (when known) enforces the invariant that buying N bottles
+    must cost more than one bottle but less than N of them - which rejects a
+    payload where the "promotional price" is actually per unit.
+    """
+    found: dict[tuple[int, float], str] = {}
+
+    for obj in iter_json_objects(node):
+        total: float | None = None
+        for raw_key, raw_value in obj.items():
+            if str(raw_key).lower().replace("_", "") not in _PROMO_TOTAL_KEYS:
+                continue
+            candidate = raw_value.get("Value") if isinstance(raw_value, dict) else raw_value
+            parsed = parse_price(candidate)
+            if parsed:
+                total = parsed
+        if total is None:
+            continue
+
+        qty: int | None = None
+        for raw_key, raw_value in obj.items():
+            if str(raw_key).lower().replace("_", "") not in _QTY_KEYS:
+                continue
+            if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+                continue
+            if 2 <= int(raw_value) <= MAX_MULTIBUY_QTY:
+                qty = int(raw_value)
+                break
+        label_bits: list[str] = []
+        for raw_key, raw_value in obj.items():
+            if isinstance(raw_value, str) and raw_value.strip():
+                if "text" in str(raw_key).lower() or "description" in str(raw_key).lower():
+                    label_bits.append(raw_value.strip())
+                    if qty is None:
+                        match = _QTY_TEXT_RE.search(raw_value)
+                        if match and 2 <= int(match.group(1)) <= MAX_MULTIBUY_QTY:
+                            qty = int(match.group(1))
+        if qty is None:
+            continue
+        if single_price is not None and not (single_price < total <= single_price * qty + 0.005):
+            continue
+        label = " ".join(label_bits).strip() or f"{qty} for ${total:,.2f}"
+        found.setdefault((qty, total), label[:120])
+
+    return sorted(
+        ((qty, total, text) for (qty, total), text in found.items()),
+        key=lambda item: item[1] / item[0],
+    )
+
+
 def find_multibuys_in_html(html: str) -> list[tuple[int, float, str]]:
     """Same as find_multibuys but for rendered product pages."""
     soup = BeautifulSoup(html, "lxml")

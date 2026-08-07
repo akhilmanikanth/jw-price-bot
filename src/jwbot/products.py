@@ -145,6 +145,13 @@ BUILTIN_PRODUCTS: tuple[ProductSpec, ...] = (
         size_tokens=SIZE_1L,
         exclude_tokens=(*_BLACK_EXCLUDES, "700"),
         brief=False,
+        liquorland=RetailerRef(
+            # Self-resolved on the 2026-08-07 run ($95.00 via json-ld).
+            url=(
+                "https://www.liquorland.com.au/spirits/"
+                "johnnie-walker-black-label-12yo-scotch-whisky-1-litre_926379"
+            )
+        ),
         bws=RetailerRef(
             # Resolved live on 2026-08-01: "Johnnie Walker Black Label 12 Year
             # Old Blended Scotch Whisky 1l"
