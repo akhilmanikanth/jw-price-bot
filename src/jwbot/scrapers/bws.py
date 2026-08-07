@@ -12,7 +12,12 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from ..extract import find_availability_in_json, find_multibuys, find_price_in_json
+from ..extract import (
+    find_availability_in_json,
+    find_multibuys,
+    find_price_in_json,
+    find_structured_multibuys,
+)
 from ..http import get_json
 from ..models import MultiBuy, PriceResult
 from ..products import PRODUCTS, ProductSpec
@@ -153,11 +158,20 @@ class BWSScraper(BaseScraper):
             raise ScrapeFailure(f"no price in {label} response")
 
         available = find_availability_in_json(payload)
+        # BWS describes bulk offers structurally (FixedPricePromoTag) far more
+        # often than in words, so check both and merge.
+        seen: dict[tuple[int, float], str] = {}
+        for qty, total, text in (
+            *find_structured_multibuys(payload, single_price=price),
+            *find_multibuys(payload),
+        ):
+            seen.setdefault((qty, total), text)
         deals = [
             MultiBuy(quantity=q, total_price=t, description=text)
-            for q, t, text in find_multibuys(payload)
+            for (q, t), text in seen.items()
         ]
-        self._log_offer_fields(payload)
+        if not deals:
+            self._log_offer_fields(payload)
         return self.make_result(
             price=price,
             available=True if available is None else bool(available),
